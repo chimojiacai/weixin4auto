@@ -237,61 +237,38 @@ class WeChatMainWnd(WeChatSubWnd):
                     if not full_name:
                         return ""
                     first_space_idx = full_name.find(' ')
-                    if first_space_idx > 0:
-                        return full_name[:first_space_idx].strip()
-                    return full_name.strip()
+                    return full_name[:first_space_idx].strip() if first_space_idx > 0 else full_name.strip()
                 
-                # 优化1：先检查当前窗口是否已经是目标窗口（避免二次点击导致焦点失去）
+                # 检查当前窗口是否已是目标窗口（避免二次点击导致焦点失去）
                 try:
                     if self._chat_api.msgbox.Exists(0):
-                        current_who = self._chat_api.who
-                        current_extracted = extract_name(current_who)
+                        current_extracted = extract_name(self._chat_api.who)
                         clean_keywords = nickname.split('?')[0].split('，')[0].split(',')[0].strip()
                         
-                        # 检查是否匹配
-                        is_current_window = False
                         if exact:
-                            # 精确匹配
-                            if (current_extracted == clean_keywords or 
-                                current_extracted == nickname or
-                                current_who == clean_keywords or 
-                                current_who == nickname):
-                                is_current_window = True
+                            if current_extracted == clean_keywords or current_extracted == nickname:
+                                return self._chat_api
                         else:
-                            # 模糊匹配
-                            if (clean_keywords in current_extracted or 
-                                nickname in current_extracted or
-                                clean_keywords in current_who or 
-                                nickname in current_who):
-                                is_current_window = True
-                        
-                        if is_current_window:
-                            wxlog.debug(f'当前窗口已是目标窗口，直接发送: current="{current_extracted}" | target="{nickname}"')
-                            return self._chat_api
-                except Exception as e:
-                    wxlog.debug(f'检查当前窗口失败: {e}')
-                    # 如果检查失败，继续后续流程
+                            if clean_keywords in current_extracted or nickname in current_extracted:
+                                return self._chat_api
+                except:
+                    pass
                 
-                # 优化2：先尝试在当前可见的会话列表中查找（不滚动）
+                # 在当前可见会话列表中查找
                 session = self._session_api.find_session_in_current_view(keywords=nickname, exact=exact)
-                session_found = False
                 if session:
-                    # 找到会话，直接点击切换
                     try:
                         session.click()
-                        time.sleep(0.2)  # 等待切换完成
+                        time.sleep(0.2)
                         if self._chat_api.msgbox.Exists(0.5):
-                            session_found = True
                             return self._chat_api
-                    except Exception as e:
-                        wxlog.debug(f'点击会话失败: {e}')
-                        # 如果点击失败，继续使用搜索方式
+                    except:
+                        pass
                 
-                # 如果当前可见列表中没有找到或点击失败，再使用搜索功能
-                if not session_found:
-                    switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
-                    if not switch_result:
-                        return None
+                # 使用搜索功能
+                switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
+                if not switch_result:
+                    return None
             if self._chat_api.msgbox.Exists(0.5):
                 return self._chat_api
 
