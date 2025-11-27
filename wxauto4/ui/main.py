@@ -232,7 +232,47 @@ class WeChatMainWnd(WeChatSubWnd):
             return chatbox._chat_api
         else:
             if nickname:
-                # 优化：先尝试在当前可见的会话列表中查找（不滚动）
+                def extract_name(full_name: str) -> str:
+                    """提取名称的第一部分（第一个空格之前）"""
+                    if not full_name:
+                        return ""
+                    first_space_idx = full_name.find(' ')
+                    if first_space_idx > 0:
+                        return full_name[:first_space_idx].strip()
+                    return full_name.strip()
+                
+                # 优化1：先检查当前窗口是否已经是目标窗口（避免二次点击导致焦点失去）
+                try:
+                    if self._chat_api.msgbox.Exists(0):
+                        current_who = self._chat_api.who
+                        current_extracted = extract_name(current_who)
+                        clean_keywords = nickname.split('?')[0].split('，')[0].split(',')[0].strip()
+                        
+                        # 检查是否匹配
+                        is_current_window = False
+                        if exact:
+                            # 精确匹配
+                            if (current_extracted == clean_keywords or 
+                                current_extracted == nickname or
+                                current_who == clean_keywords or 
+                                current_who == nickname):
+                                is_current_window = True
+                        else:
+                            # 模糊匹配
+                            if (clean_keywords in current_extracted or 
+                                nickname in current_extracted or
+                                clean_keywords in current_who or 
+                                nickname in current_who):
+                                is_current_window = True
+                        
+                        if is_current_window:
+                            wxlog.debug(f'当前窗口已是目标窗口，直接发送: current="{current_extracted}" | target="{nickname}"')
+                            return self._chat_api
+                except Exception as e:
+                    wxlog.debug(f'检查当前窗口失败: {e}')
+                    # 如果检查失败，继续后续流程
+                
+                # 优化2：先尝试在当前可见的会话列表中查找（不滚动）
                 session = self._session_api.find_session_in_current_view(keywords=nickname, exact=exact)
                 session_found = False
                 if session:
