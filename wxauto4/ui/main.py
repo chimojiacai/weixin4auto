@@ -21,6 +21,7 @@ import random
 import os
 import re
 import sys
+import time
 
 class WeChatSubWnd(BaseUISubWnd):
     _ui_cls_name: str = WxUI41Config.SUB_WINDOW_UI_CLS
@@ -231,9 +232,26 @@ class WeChatMainWnd(WeChatSubWnd):
             return chatbox._chat_api
         else:
             if nickname:
-                switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
-                if not switch_result:
-                    return None
+                # 优化：先尝试在当前可见的会话列表中查找（不滚动）
+                session = self._session_api.find_session_in_current_view(keywords=nickname, exact=exact)
+                session_found = False
+                if session:
+                    # 找到会话，直接点击切换
+                    try:
+                        session.click()
+                        time.sleep(0.2)  # 等待切换完成
+                        if self._chat_api.msgbox.Exists(0.5):
+                            session_found = True
+                            return self._chat_api
+                    except Exception as e:
+                        wxlog.debug(f'点击会话失败: {e}')
+                        # 如果点击失败，继续使用搜索方式
+                
+                # 如果当前可见列表中没有找到或点击失败，再使用搜索功能
+                if not session_found:
+                    switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
+                    if not switch_result:
+                        return None
             if self._chat_api.msgbox.Exists(0.5):
                 return self._chat_api
 

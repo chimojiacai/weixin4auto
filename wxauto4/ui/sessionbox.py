@@ -86,6 +86,122 @@ class SessionBox:
         
         return []
 
+    def find_session_in_current_view(
+            self, 
+            keywords: str, 
+            exact: bool = False
+        ) -> Union[SessionElement, None]:
+        """在当前可见的会话列表中查找匹配的会话（不滚动）
+        
+        Args:
+            keywords: 要查找的会话名称关键词
+            exact: 是否精确匹配，默认False（模糊匹配）
+            
+        Returns:
+            SessionElement: 找到的会话元素，如果未找到返回None
+        """
+        try:
+            # 获取当前可见的会话列表（不滚动）
+            sessions = self.get_session()
+            if not sessions:
+                return None
+            
+            # 只查找当前可见的会话（在窗口内的）
+            visible_sessions = [
+                session for session in sessions 
+                if uia.IsElementInWindow(self.session_list, session.control)
+            ]
+            
+            if not visible_sessions:
+                return None
+            
+            # 清理关键词（去除可能的特殊字符）
+            clean_keywords = keywords.split('?')[0].split('，')[0].split(',')[0].strip()
+            
+            def extract_session_name(full_name: str) -> str:
+                """提取会话名称的第一部分（第一个空格之前）
+                
+                例如：
+                - "探活ping 132 昨天 19:34" -> "探活ping"
+                - "0xlyz2 测试消息 - 10:42:46 10:42" -> "0xlyz2"
+                - "文件传输助手 1 星期一" -> "文件传输助手"
+                """
+                if not full_name:
+                    return ""
+                # 取第一个空格之前的内容
+                first_space_idx = full_name.find(' ')
+                if first_space_idx > 0:
+                    return full_name[:first_space_idx].strip()
+                # 如果没有空格，返回完整名称
+                return full_name.strip()
+            
+            # 调试：打印所有可见会话的名称和内容
+            wxlog.debug(f'查找会话关键词: "{keywords}" (exact={exact})')
+            wxlog.debug(f'当前可见会话数量: {len(visible_sessions)}')
+            for idx, session in enumerate(visible_sessions, 1):
+                session_name = session.name
+                extracted_name = extract_session_name(session_name)
+                session_content = session.content
+                session_texts = session.texts
+                wxlog.debug(f'  [{idx}] name="{session_name}" | extracted="{extracted_name}" | content="{session_content[:50] if len(session_content) > 50 else session_content}"')
+            
+            # 查找匹配的会话
+            for session in visible_sessions:
+                session_name = session.name
+                extracted_name = extract_session_name(session_name)
+                session_content = session.content
+                session_texts = session.texts
+                
+                # 尝试多种匹配方式
+                # 1. 匹配提取的会话名称（第一个空格之前）
+                # 2. 匹配完整会话名称
+                # 3. 匹配完整内容
+                # 4. 匹配所有文本行
+                
+                if exact:
+                    # 精确匹配：完全匹配提取的名称、完整名称或内容
+                    if (extracted_name == clean_keywords or 
+                        extracted_name == keywords or
+                        session_name == clean_keywords or 
+                        session_name == keywords or
+                        session_content == clean_keywords or
+                        session_content == keywords):
+                        wxlog.debug(f'精确匹配成功: extracted="{extracted_name}" | name="{session_name}"')
+                        return session
+                    # 也检查文本行
+                    for text in session_texts:
+                        text_extracted = extract_session_name(text)
+                        if (text_extracted == clean_keywords or 
+                            text_extracted == keywords or
+                            text == clean_keywords or 
+                            text == keywords):
+                            wxlog.debug(f'精确匹配成功（文本行）: extracted="{text_extracted}" | text="{text}"')
+                            return session
+                else:
+                    # 模糊匹配：关键词包含在提取的名称、完整名称或内容中
+                    if (clean_keywords in extracted_name or 
+                        keywords in extracted_name or
+                        clean_keywords in session_name or 
+                        keywords in session_name or
+                        clean_keywords in session_content or
+                        keywords in session_content):
+                        wxlog.debug(f'模糊匹配成功: extracted="{extracted_name}" | name="{session_name}"')
+                        return session
+                    # 也检查文本行
+                    for text in session_texts:
+                        text_extracted = extract_session_name(text)
+                        if (clean_keywords in text_extracted or 
+                            keywords in text_extracted or
+                            clean_keywords in text or 
+                            keywords in text):
+                            wxlog.debug(f'模糊匹配成功（文本行）: extracted="{text_extracted}" | text="{text}"')
+                            return session
+            
+            return None
+        except Exception as e:
+            wxlog.debug(f'查找当前可见会话失败: {e}')
+            return None
+
     def search(
             self, 
             keywords: str,
