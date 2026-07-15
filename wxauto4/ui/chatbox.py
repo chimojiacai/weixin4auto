@@ -100,10 +100,61 @@ class ChatBox(BaseUISubWnd):
         if not self.editbox.HasKeyboardFocus:
             self.editbox.MiddleClick()
 
+    def _find_child_by_class(self, ctrl, target_cls, max_depth=5):
+        """递归查找子控件"""
+        if ctrl is None or max_depth < 0:
+            return None
+        try:
+            if ctrl.ClassName == target_cls:
+                return ctrl
+            for child in ctrl.GetChildren():
+                result = self._find_child_by_class(child, target_cls, max_depth - 1)
+                if result:
+                    return result
+        except:
+            pass
+        return None
+
     def init(self):
-        self.msgbox = self.control.GroupControl(ClassName=WxUI41Config.CHAT_MESSAGE_VIEW_CLS).ListControl()
-        self.editbox = self.control.EditControl(ClassName=WxUI41Config.CHAT_INPUT_FIELD_CLS)
-        self.sendbtn = self.control.ButtonControl(Name=self._lang('发送(S)'))
+        if self.control is None:
+            # 控件未找到时，设置空占位控件
+            self.msgbox = uia.ListControl()
+            self.editbox = uia.EditControl()
+            self.sendbtn = uia.ButtonControl()
+            self.tools = uia.ToolBarControl()
+            self._empty = True
+            return
+        
+        # 尝试直接路径查找（旧版微信）
+        msg_view = self.control.GroupControl(ClassName=WxUI41Config.CHAT_MESSAGE_VIEW_CLS)
+        if msg_view.Exists(0):
+            self.msgbox = msg_view.ListControl()
+        else:
+            # 递归查找 MessageView
+            found = self._find_child_by_class(self.control, WxUI41Config.CHAT_MESSAGE_VIEW_CLS)
+            if found:
+                self.msgbox = found.ListControl()
+            else:
+                self.msgbox = uia.ListControl()
+        
+        # 查找输入框
+        editbox = self.control.EditControl(ClassName=WxUI41Config.CHAT_INPUT_FIELD_CLS)
+        if editbox.Exists(0):
+            self.editbox = editbox
+        else:
+            found = self._find_child_by_class(self.control, WxUI41Config.CHAT_INPUT_FIELD_CLS)
+            if found:
+                self.editbox = found
+            else:
+                # 回退：查找任意 EditControl
+                self.editbox = self.control.EditControl()
+        
+        # 查找发送按钮（新版微信可能不存在，send_text 中用 Enter 键替代）
+        sendbtn = self.control.ButtonControl(Name=self._lang('发送(S)'))
+        if not sendbtn.Exists(0):
+            sendbtn = self.control.ButtonControl(Name='发送')
+        self.sendbtn = sendbtn if sendbtn.Exists(0) else uia.ButtonControl()
+        
         self.tools = self.control.ToolBarControl()
         self._empty = False
         if (cid := self.id) and cid not in USED_MSG_IDS:
@@ -118,6 +169,13 @@ class ChatBox(BaseUISubWnd):
                     self._empty = True
             except:
                 self._empty = True
+
+    def _send(self):
+        """发送消息：优先点击发送按钮，找不到则用 Enter 键"""
+        if self.sendbtn.Exists(0):
+            self.sendbtn.Click()
+        else:
+            self.editbox.SendKeys('{Enter}')
 
     def clear_edit(self):
         self._show()
@@ -150,8 +208,8 @@ class ChatBox(BaseUISubWnd):
             if time.time() - t0 > 10:
                 return WxResponse.failure(f'Timeout --> {self.who} - {content}')
             self._activate_editbox()
-
-            self.sendbtn.Click()
+            self._send()
+            
             if not self.editbox.GetValuePattern().Value:
                 return WxResponse.success(f"success")
             elif not self.editbox.GetValuePattern().Value.replace('￼', '').strip():
@@ -178,7 +236,8 @@ class ChatBox(BaseUISubWnd):
 
         SetClipboardFiles(file_path)
         self.editbox.SendKeys('{Ctrl}v')
-        self.sendbtn.Click()
+        time.sleep(0.3)
+        self._send()
 
     def input_at(self, at_list):
         if isinstance(at_list, str):

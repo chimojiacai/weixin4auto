@@ -43,11 +43,50 @@ class WeChatSubWnd(BaseUISubWnd):
             hwnd = key
         self.control = uia.ControlFromHandle(hwnd)
         if self.control is not None:
-            chatbox_control = self.control.\
+            self._chat_api = ChatBox(self._find_chatbox_control(), self)
+            self.nickname = self.control.Name
+
+    def _find_chatbox_control(self):
+        """查找聊天区域控件，兼容新旧版微信"""
+        # 旧版路径: ChatMessagePage > XSplitterView
+        try:
+            chatbox = self.control.\
                 GroupControl(ClassName=WxUI41Config.CHAT_PAGE_CLS).\
                 CustomControl(ClassName=WxUI41Config.CHAT_SPLITTER_CLS)
-            self._chat_api = ChatBox(chatbox_control, self)
-            self.nickname = self.control.Name
+            if chatbox.Exists(0):
+                return chatbox
+        except:
+            pass
+        # 新版路径: 递归查找 ChatDetailView 内的 XSplitterView
+        chat_detail = self._find_control_by_class(
+            self.control, 'mmui::ChatDetailView', max_depth=6
+        )
+        if chat_detail:
+            splitter = self._find_control_by_class(
+                chat_detail, WxUI41Config.CHAT_SPLITTER_CLS, max_depth=3
+            )
+            if splitter:
+                return splitter
+        # 最终回退: 查找顶层 XSplitterView
+        return self._find_control_by_class(
+            self.control, WxUI41Config.CHAT_SPLITTER_CLS, max_depth=6
+        )
+
+    @staticmethod
+    def _find_control_by_class(ctrl, target_cls, depth=0, max_depth=6):
+        """递归查找指定类名的控件"""
+        if depth > max_depth:
+            return None
+        try:
+            if ctrl.ClassName == target_cls:
+                return ctrl
+            for child in ctrl.GetChildren():
+                result = WeChatSubWnd._find_control_by_class(child, target_cls, depth + 1, max_depth)
+                if result:
+                    return result
+        except:
+            pass
+        return None
 
     def __repr__(self):
         return f'<{PROJECT_NAME} - {self.__class__.__name__} object("{self.nickname}")>'
@@ -201,9 +240,10 @@ class WeChatMainWnd(WeChatSubWnd):
             
             sessionbox_control = self.control.\
                 GroupControl(ClassName=WxUI41Config.SESSION_BOX_CLS)
-            chatbox_control = self.control.\
-                GroupControl(ClassName=WxUI41Config.CHAT_PAGE_CLS).\
-                CustomControl(ClassName=WxUI41Config.CHAT_SPLITTER_CLS)
+            
+            # 查找聊天区域控件（兼容新旧版微信）
+            chatbox_control = self._find_chatbox_control()
+            
             self._navigation_api = NavigationBox(navigation_control, self)
             self._session_api = SessionBox(sessionbox_control, self)
             self._chat_api = ChatBox(chatbox_control, self)
@@ -217,6 +257,30 @@ class WeChatMainWnd(WeChatSubWnd):
 
     def __repr__(self):
         return f'<{PROJECT_NAME} - {self.__class__.__name__} object("{self.nickname}")>'
+
+    def _refresh_chatbox_control(self):
+        """重新查找聊天区域控件（切换聊天后控件树可能变化）"""
+        # 优先查找 ChatDetailView 内部的 XSplitterView（新版微信）
+        chat_detail = self._find_control_by_class(
+            self.control, 'mmui::ChatDetailView', max_depth=6
+        )
+        if chat_detail:
+            splitter = self._find_control_by_class(
+                chat_detail, WxUI41Config.CHAT_SPLITTER_CLS, max_depth=3
+            )
+            if splitter:
+                self._chat_api = ChatBox(splitter, self)
+                return
+        
+        # 回退：旧版路径 ChatMessagePage > XSplitterView
+        try:
+            chat_page = self.control.GroupControl(ClassName=WxUI41Config.CHAT_PAGE_CLS)
+            if chat_page.Exists(0):
+                splitter = chat_page.CustomControl(ClassName=WxUI41Config.CHAT_SPLITTER_CLS)
+                if splitter.Exists(0):
+                    self._chat_api = ChatBox(splitter, self)
+        except:
+            pass
 
     def _get_wx_path(self):
         return GetPathByHwnd(self.HWND)
@@ -264,6 +328,7 @@ class WeChatMainWnd(WeChatSubWnd):
                     try:
                         session.click()
                         time.sleep(0.2)
+                        self._refresh_chatbox_control()
                         if self._chat_api.msgbox.Exists(0.5):
                             return self._chat_api
                     except:
@@ -273,8 +338,12 @@ class WeChatMainWnd(WeChatSubWnd):
                 switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
                 if not switch_result:
                     return None
+            
+            # 搜索切换后，重新查找聊天控件（新版微信控件树可能变化）
+            self._refresh_chatbox_control()
             if self._chat_api.msgbox.Exists(0.5):
                 return self._chat_api
+            return None
 
     def switch_chat(
             self, 

@@ -260,7 +260,16 @@ class SessionBox:
                 return None
             
             matched_items = []
-            current_section = None
+            current_section = 'contact'  # 默认为联系人（新版微信可能没有分类头）
+            has_section_header = False
+            
+            # 分类头关键词（用于识别分区标题）
+            section_headers = {
+                '联系人': 'contact',
+                '群聊': 'group',
+                '聊天记录': 'chat_history',
+                '功能': 'function',
+            }
             
             for search_result_item in search_result_items:
                 try:
@@ -272,14 +281,10 @@ class SessionBox:
                     if any(keyword in text for keyword in skip_keywords):
                         continue
                     
-                    if text == '联系人':
-                        current_section = 'contact'
-                        continue
-                    elif text == '群聊':
-                        current_section = 'group'
-                        continue
-                    elif text == '聊天记录':
-                        current_section = 'chat_history'
+                    # 检查是否是分类头
+                    if text in section_headers:
+                        current_section = section_headers[text]
+                        has_section_header = True
                         continue
                     elif '搜索网络结果' in text or '网络' in text:
                         current_section = None
@@ -314,11 +319,13 @@ class SessionBox:
                             is_match = True
                             match_text = main_text if main_text else text
                     
-                    if is_match and current_section in ['contact', 'group']:
+                    # 新版微信可能没有分类头，默认允许联系人/群聊类型匹配
+                    if is_match and current_section in ['contact', 'group', 'function', None]:
+                        item_type = current_section if current_section in ['contact', 'group'] else 'contact'
                         matched_items.append({
                             'item': search_result_item,
                             'text': match_text,
-                            'type': current_section,
+                            'type': item_type,
                             'full_text': text
                         })
                         
