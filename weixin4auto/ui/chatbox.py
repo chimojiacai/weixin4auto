@@ -158,6 +158,7 @@ class ChatBox(BaseUISubWnd):
         self.tools = self.control.ToolBarControl()
         self._empty = False
         if (cid := self.id) and cid not in USED_MSG_IDS:
+            self._last_msgbox_id = cid
             try:
                 msg_controls = self.msgbox.GetChildren()
                 msg_count = len([c for c in msg_controls if c.ControlTypeName == 'ListItemControl'])
@@ -271,106 +272,113 @@ class ChatBox(BaseUISubWnd):
         return []
 
     def get_new_msgs(self):
-        """获取新消息（优化版：基于窗口状态/布局变化检测）
+        """获取新消息（基于 runtimeid 变更检测 + 自动重置）
         
         核心思路：
-        1. 启动监听时，记录当前窗口状态（所有消息ID）
-        2. 后续检查时，比较当前状态和已记录状态
-        3. 只有当状态变化时（有新消息），才返回新消息
-        
-        注意：此方法在监听模式下会被频繁调用，应避免触发窗口激活操作
+        1. 检测 msgbox 的 runtimeid 是否变化（UIA 树重建）
+        2. 如果变化，自动重置消息追踪状态
+        3. 比较当前状态和已记录状态，返回新消息
         """
-        # 优化：使用Exists(0)快速检查，不等待，避免触发窗口激活
-        # Exists(0) 不会触发窗口激活，只是检查控件是否存在
+        # 快速检查 msgbox 是否存在
         try:
             if not self.msgbox.Exists(0):
                 return []
-        except:
-            # 如果检查失败，直接返回空列表，避免后续操作触发窗口激活
+        except Exception:
             return []
         
-        # 快速检查：先获取消息控件（只获取 ListItemControl 类型的控件）
+        # 获取当前 msgbox 的 runtimeid
+        try:
+            current_msgbox_id = self.msgbox.runtimeid
+        except Exception:
+            return []
+        
+        if current_msgbox_id is None:
+            return []
+        
+        # 检测 runtimeid 是否变化（UIA 树重建/窗口恢复）
+        last_known_id = getattr(self, '_last_msgbox_id', None)
+        if last_known_id is not None and last_known_id != current_msgbox_id:
+            # msgbox runtimeid 变了，旧 ID 全部失效，重新初始化
+            from weixin4auto.logger import wxlog
+            wxlog.debug(f"[msgbox] runtimeid 变更: {last_known_id} -> {current_msgbox_id}，重置消息追踪")
+            # 清理旧 ID 的数据
+            if last_known_id in USED_MSG_IDS:
+                del USED_MSG_IDS[last_known_id]
+            if last_known_id in LAST_MSG_COUNT:
+                del LAST_MSG_COUNT[last_known_id]
+            # 重置当前状态
+            self._last_msgbox_id = current_msgbox_id
+            USED_MSG_IDS[current_msgbox_id] = tuple()
+            LAST_MSG_COUNT[current_msgbox_id] = 0
+        else:
+            self._last_msgbox_id = current_msgbox_id
+        
+        # 获取所有消息控件
         try:
             all_controls = self.msgbox.GetChildren()
-            # 只获取 ListItemControl 类型的控件（真正的消息控件）
             msg_controls = [c for c in all_controls if c.ControlTypeName == 'ListItemControl']
             current_msg_count = len(msg_controls)
-        except:
+        except Exception:
             return []
         
         if current_msg_count == 0:
             return []
         
-        # 获取已记录的消息ID列表（窗口状态）
-        current_used_ids = self.used_msg_ids or tuple()
-        
-        # 获取上次记录的消息数量
-        last_msg_count = LAST_MSG_COUNT.get(self.id, 0)
+        # 获取已记录的消息 ID 列表
+        current_used_ids = USED_MSG_IDS.get(current_msgbox_id, tuple())
+        last_msg_count = LAST_MSG_COUNT.get(current_msgbox_id, 0)
         
         if self._empty and current_used_ids:
             self._empty = False
         
-        # 启动监听时的初始化：如果状态还没记录，记录当前窗口状态（所有消息ID），但不返回历史消息
+        def _update_state():
+            try:
+                all_msg_ids = tuple(c.runtimeid for c in msg_controls)
+                USED_MSG_IDS[current_msgbox_id] = all_msg_ids[-100:] if len(all_msg_ids) > 100 else all_msg_ids
+                LAST_MSG_COUNT[current_msgbox_id] = current_msg_count
+            except Exception:
+                pass
+        
+        def _extract_new_msgs(candidate_controls, used_id_set):
+            new_ids = [c.runtimeid for c in candidate_controls if c.runtimeid not in used_id_set]
+            if new_ids:
+                _update_state()
+                new_id_set = set(new_ids)
+                return [parse_msg(c, self) for c in candidate_controls if c.runtimeid in new_id_set]
+            return []
+        
+        # 首次初始化：记录当前状态，不返回历史消息
         if not current_used_ids:
             if not self._empty:
-                try:
-                    all_msg_ids = tuple((i.runtimeid for i in msg_controls))
-                    USED_MSG_IDS[self.id] = all_msg_ids[-100:] if len(all_msg_ids) > 100 else all_msg_ids
-                    LAST_MSG_COUNT[self.id] = current_msg_count
-                except:
-                    pass
+                _update_state()
             return []
         
-        # 比较当前窗口状态和已记录的状态，如果状态变化则返回新消息
-        msg_count_increased = current_msg_count > last_msg_count
+        used_id_set = set(current_used_ids)
         
-        if msg_count_increased:
+        # 情况1：消息数量增加
+        if current_msg_count > last_msg_count:
             new_msg_count = current_msg_count - last_msg_count
             check_count = min(new_msg_count + 10, current_msg_count)
-            try:
-                recent_controls = msg_controls[-check_count:] if check_count < len(msg_controls) else msg_controls
-                recent_msg_ids = tuple((i.runtimeid for i in recent_controls))
-            except:
-                return []
-            
-            candidate_new_ids = recent_msg_ids[-new_msg_count:] if len(recent_msg_ids) >= new_msg_count else recent_msg_ids
-            used_msg_ids_set = set(current_used_ids)
-            confirmed_new_ids = [msg_id for msg_id in candidate_new_ids if msg_id not in used_msg_ids_set]
-            
-            if confirmed_new_ids:
-                try:
-                    all_msg_ids = tuple((i.runtimeid for i in msg_controls))
-                    USED_MSG_IDS[self.id] = all_msg_ids[-100:] if len(all_msg_ids) > 100 else all_msg_ids
-                    LAST_MSG_COUNT[self.id] = current_msg_count
-                except:
-                    pass
-                
-                new_controls = [i for i in recent_controls if i.runtimeid in confirmed_new_ids]
-                return [parse_msg(msg_control, self) for msg_control in new_controls]
-        
-        # 如果消息数量没变，检查最后20条消息是否有ID变化
-        check_count = min(20, current_msg_count)
-        try:
-            recent_controls = msg_controls[-check_count:] if check_count < len(msg_controls) else msg_controls
-            recent_msg_ids = tuple((i.runtimeid for i in recent_controls))
-        except:
+            tail_controls = msg_controls[-check_count:]
+            result = _extract_new_msgs(tail_controls, used_id_set)
+            if result:
+                return result
+            _update_state()
             return []
         
-        used_msg_ids_set = set(current_used_ids)
-        new_ids = [msg_id for msg_id in recent_msg_ids if msg_id not in used_msg_ids_set]
+        # 情况2：消息数量未变 —— 快速路径
+        last_ctrl = msg_controls[-1]
+        last_id = last_ctrl.runtimeid
+        if last_id in used_id_set:
+            quick_check_count = min(5, current_msg_count)
+            tail_controls = msg_controls[-quick_check_count:]
+            has_new = any(c.runtimeid not in used_id_set for c in tail_controls)
+            if not has_new:
+                return []  # 快速路径：无新消息
         
-        if new_ids:
-            try:
-                all_msg_ids = tuple((i.runtimeid for i in msg_controls))
-                USED_MSG_IDS[self.id] = all_msg_ids[-100:] if len(all_msg_ids) > 100 else all_msg_ids
-                LAST_MSG_COUNT[self.id] = current_msg_count
-            except:
-                pass
-            
-            new_controls = [i for i in recent_controls if i.runtimeid in new_ids]
-            return [parse_msg(msg_control, self) for msg_control in new_controls]
-
-        return []
+        check_count = min(20, current_msg_count)
+        tail_controls = msg_controls[-check_count:]
+        return _extract_new_msgs(tail_controls, used_id_set)
 
     def _update_used_msg_ids(self):
         if not self.msgbox.Exists(0):

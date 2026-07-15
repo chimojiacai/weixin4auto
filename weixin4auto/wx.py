@@ -26,6 +26,11 @@ if TYPE_CHECKING:
     from weixin4auto.ui.sessionbox import SessionElement
 
 class Listener(ABC):
+    # 清理更新文件的间隔（秒），避免频繁 I/O
+    _CLEANUP_INTERVAL = 60.0
+    # 窗口检查失败的最大重试次数（0.3s/次，100次≈30s），超过后才认为窗口已关闭
+    _MAX_CHECK_RETRIES = 100
+
     def _listener_start(self):
         wxlog.debug('开始监听')
         self._listener_is_listening = True
@@ -33,21 +38,33 @@ class Listener(ABC):
         self._lock = threading.RLock()
         self._listener_stop_event = threading.Event()
         self._listener_thread = threading.Thread(target=self._listener_listen, daemon=True)
+        # 每个监听对象的重试计数器
+        self._check_fail_counts = {}
+        # 每个监听对象的昵称（用于窗口恢复时重新打开）
+        self._listen_nicknames = {}
         self._listener_thread.start()
 
     def _listener_listen(self):
         self._excutor = ThreadPoolExecutor(max_workers=WxParam.LISTENER_EXCUTOR_WORKERS)
         if not hasattr(self, 'listen') or not self.listen:
             self.listen = {}
+        last_cleanup = time.time()
         while not self._listener_stop_event.is_set():
-            delete_update_files()
+            # 定期清理更新文件，而非每次循环都清理
+            now = time.time()
+            if now - last_cleanup >= self._CLEANUP_INTERVAL:
+                try:
+                    delete_update_files()
+                except Exception:
+                    pass
+                last_cleanup = now
             try:
                 self._get_listen_messages()
             except KeyboardInterrupt:
                 wxlog.debug("监听消息终止")
                 self._listener_stop()
                 break
-            except:
+            except Exception:
                 wxlog.debug(f'监听消息失败：{traceback.format_exc()}')
             time.sleep(WxParam.LISTEN_INTERVAL)
 
@@ -230,6 +247,9 @@ class WeChat(Chat, Listener):
         # nickname 已经在 WeChatMainWnd 初始化时从头像弹窗获取了
         self.nickname = self._api.nickname
         self.listen = {}
+        # 消息收集器：{nickname: [msg, ...]}
+        self._collected_messages = {}
+        self._collected_lock = threading.Lock()
         
         # 唤起微信窗口到前台并打印昵称
         self._api._show()
@@ -242,42 +262,101 @@ class WeChat(Chat, Listener):
             wxlog.debug('Debug mode is on')
         
     def _get_listen_messages(self):
-        """获取监听消息（优化版：增强错误处理和稳定性）"""
+        """获取监听消息（容错重试 + 窗口恢复 + runtimeid 变更检测）"""
         try:
             sys.stdout.flush()
         except:
             pass
+
         temp_listen = self.listen.copy()
-        for who in temp_listen:
-            chat, callback = temp_listen.get(who, (None, None))
-            try:
-                # 检查聊天窗口是否存在
-                if chat is None:
-                    self.RemoveListenChat(who)
-                    continue
-                # 检查窗口是否仍然有效
-                if not chat._api.exists(0):
-                    self.RemoveListenChat(who)
-                    continue
-            except Exception as e:
-                # 如果检查失败，尝试移除该监听
-                try:
-                    self.RemoveListenChat(who)
-                except:
-                    pass
+        to_remove = []
+
+        for who, (chat, callback) in temp_listen.items():
+            if chat is None:
+                to_remove.append(who)
                 continue
-            
-            # 获取新消息
+
+            # ── 1. 检查聊天窗口是否存在 ──
+            try:
+                window_exists = chat._api.exists(0)
+            except Exception:
+                window_exists = False
+
+            if not window_exists:
+                fail_count = self._check_fail_counts.get(who, 0) + 1
+                self._check_fail_counts[who] = fail_count
+
+                if fail_count >= self._MAX_CHECK_RETRIES:
+                    wxlog.debug(f"[{who}] 窗口连续 {fail_count} 次不可用，尝试重新打开")
+                    # 不直接移除，尝试重新打开子窗口
+                    if self._try_recover_window(who, chat, callback):
+                        # 恢复成功，重置失败计数
+                        self._check_fail_counts.pop(who, None)
+                    else:
+                        wxlog.debug(f"[{who}] 窗口恢复失败，移除监听")
+                        to_remove.append(who)
+                else:
+                    if fail_count % 20 == 0:  # 每 20 次（约6s）打印一次，避免日志刷屏
+                        wxlog.debug(f"[{who}] 窗口暂不可用 ({fail_count}/{self._MAX_CHECK_RETRIES})")
+                continue
+            else:
+                # 窗口恢复，重置失败计数
+                if who in self._check_fail_counts:
+                    wxlog.debug(f"[{who}] 窗口已恢复")
+                    del self._check_fail_counts[who]
+
+            # ── 2. 获取新消息 ──
             try:
                 with self._lock:
                     msgs = chat.GetNewMessage()
+                if msgs:
+                    wxlog.debug(f"[{who}] 获取到 {len(msgs)} 条新消息")
                     for msg in msgs:
-                        wxlog.debug(f"[{msg.attr}]获取到新消息：{who} - {msg.content}")
+                        wxlog.debug(f"  [{msg.attr}] {who} - {msg.content}")
                         self._excutor.submit(self._safe_callback, callback, msg, chat)
             except Exception as e:
-                # 获取消息失败，记录但不中断监听
-                wxlog.debug(f"获取 {who} 的新消息失败: {e}")
+                wxlog.debug(f"[{who}] 获取新消息失败: {e}")
                 continue
+
+        # 延迟移除失败的监听对象
+        for who in to_remove:
+            try:
+                self.RemoveListenChat(who, close_window=False)
+            except Exception:
+                pass
+            # 清理相关状态
+            self._check_fail_counts.pop(who, None)
+            self._listen_nicknames.pop(who, None)
+
+    def _try_recover_window(self, who: str, old_chat: 'Chat', callback) -> bool:
+        """尝试恢复不可用的监听窗口（重新打开子窗口）"""
+        nickname = self._listen_nicknames.get(who, who)
+        try:
+            wxlog.debug(f"[{nickname}] 尝试恢复监听窗口...")
+            subwin = self._api.open_separate_window(nickname)
+            if subwin is None:
+                return False
+            new_chat = Chat(subwin)
+            # 重新初始化消息追踪状态
+            chatbox_id = new_chat._api._chat_api.id if hasattr(new_chat._api, '_chat_api') and new_chat._api._chat_api else None
+            if chatbox_id:
+                from weixin4auto.ui.chatbox import USED_MSG_IDS, LAST_MSG_COUNT
+                try:
+                    msg_controls = new_chat._api._chat_api.msgbox.GetChildren()
+                    msg_controls = [c for c in msg_controls if c.ControlTypeName == 'ListItemControl']
+                    all_msg_ids = tuple(c.runtimeid for c in msg_controls)
+                    USED_MSG_IDS[chatbox_id] = all_msg_ids[-100:] if len(all_msg_ids) > 100 else all_msg_ids
+                    LAST_MSG_COUNT[chatbox_id] = len(msg_controls)
+                except Exception:
+                    USED_MSG_IDS[chatbox_id] = tuple()
+                    LAST_MSG_COUNT[chatbox_id] = 0
+            # 替换旧的 chat 对象
+            self.listen[who] = (new_chat, callback)
+            wxlog.debug(f"[{nickname}] 监听窗口恢复成功")
+            return True
+        except Exception as e:
+            wxlog.debug(f"[{nickname}] 窗口恢复异常: {e}")
+            return False
 
     @property
     def path(self):
@@ -391,6 +470,7 @@ class WeChat(Chat, Listener):
                 USED_MSG_IDS[chatbox_id] = tuple()
                 LAST_MSG_COUNT[chatbox_id] = 0
         self.listen[name] = (chat, callback)
+        self._listen_nicknames[name] = nickname
         return chat
     
     def StopListening(self, remove: bool = True) -> None:
@@ -432,6 +512,136 @@ class WeChat(Chat, Listener):
             chat.Close()
         del self.listen[nickname]
         return WxResponse.success()
+
+    def ListenChats(
+            self,
+            nickname: Union[str, List[str]],
+            callback: Callable[['Message', Chat], None] = None,
+            auto_reply: str = None,
+            block: bool = False,
+        ) -> None:
+        """高层监听接口：一键启动对一个或多个聊天的监听
+        
+        内部自动完成：启动监听线程 → 打开子窗口 → 注册回调 → 可选阻塞等待
+        
+        Args:
+            nickname: 要监听的聊天对象，支持单个昵称(str)或多个昵称(list)
+            callback: 收到消息时的回调函数，签名 callback(msg, chat)
+                      如果不指定，消息会自动缓存，可通过 GetListenMessages() 获取
+            auto_reply: 自动回复模板，{msg} 会被替换为收到的消息内容
+                        例如: "收到：{msg}"  如果设置此项且未指定 callback，会自动生成回调
+            block: 是否阻塞当前线程（True 时按 Ctrl+C 退出）
+        
+        Examples:
+            # 最简单用法：监听并缓存消息
+            wx.ListenChats("文件传输助手")
+            msgs = wx.GetListenMessages("文件传输助手")
+            
+            # 带自动回复
+            wx.ListenChats("文件传输助手", auto_reply="收到：{msg}")
+            
+            # 自定义回调
+            wx.ListenChats("文件传输助手", callback=lambda msg, chat: print(msg.content))
+            
+            # 监听多个对象并阻塞
+            wx.ListenChats(["A", "B"], auto_reply="已读", block=True)
+        """
+        # 统一为列表
+        if isinstance(nickname, str):
+            nicknames = [nickname]
+        else:
+            nicknames = list(nickname)
+        
+        # 构建回调：用户 callback 始终优先，auto_reply 作为补充
+        original_callback = callback
+        if callback is None and auto_reply is not None:
+            # 无用户回调，有自动回复：缓存 + 自动回复
+            def _auto_reply_callback(msg, chat):
+                self._collect_message(chat.who, msg)
+                reply_text = auto_reply.replace('{msg}', str(msg.content))
+                try:
+                    chat.SendMsg(reply_text)
+                except Exception as e:
+                    wxlog.debug(f"自动回复失败: {e}")
+            callback = _auto_reply_callback
+        elif callback is None:
+            # 纯缓存模式
+            def _collect_callback(msg, chat):
+                self._collect_message(chat.who, msg)
+            callback = _collect_callback
+        elif auto_reply is not None:
+            # 用户回调 + 自动回复
+            def _combined_callback(msg, chat):
+                self._collect_message(chat.who, msg)
+                original_callback(msg, chat)
+                reply_text = auto_reply.replace('{msg}', str(msg.content))
+                try:
+                    chat.SendMsg(reply_text)
+                except Exception as e:
+                    wxlog.debug(f"自动回复失败: {e}")
+            callback = _combined_callback
+        else:
+            # 纯用户回调
+            def _wrapped_callback(msg, chat):
+                self._collect_message(chat.who, msg)
+                original_callback(msg, chat)
+            callback = _wrapped_callback
+        
+        # 逐个添加监听
+        for nick in nicknames:
+            result = self.AddListenChat(nick, callback)
+            if isinstance(result, WxResponse) and not result.is_success:
+                wxlog.debug(f"添加监听失败: {nick} - {result.get('message', '')}")
+        
+        # 阻塞等待
+        if block:
+            try:
+                self.KeepRunning()
+            except KeyboardInterrupt:
+                self.StopListening(True)
+
+    def GetListenMessages(
+            self,
+            nickname: str = None,
+            clear: bool = True,
+        ) -> List['Message']:
+        """获取监听收集到的消息
+        
+        Args:
+            nickname: 指定聊天对象的昵称，不指定则返回所有监听对象的消息
+            clear: 获取后是否清空缓存，默认 True
+        
+        Returns:
+            List[Message]: 收集到的消息列表
+        """
+        with self._collected_lock:
+            if nickname is None:
+                # 返回所有消息
+                all_msgs = []
+                for msgs in self._collected_messages.values():
+                    all_msgs.extend(msgs)
+                if clear:
+                    self._collected_messages.clear()
+                return all_msgs
+            else:
+                # 返回指定对象的消息（支持模糊匹配）
+                msgs = []
+                matched_keys = []
+                for key, val in self._collected_messages.items():
+                    if key == nickname or nickname in key or key in nickname:
+                        msgs.extend(val)
+                        matched_keys.append(key)
+                if clear:
+                    for key in matched_keys:
+                        del self._collected_messages[key]
+                return msgs
+
+    def _collect_message(self, who: str, msg: 'Message') -> None:
+        """内部方法：将消息缓存到收集器"""
+        with self._collected_lock:
+            if who not in self._collected_messages:
+                self._collected_messages[who] = []
+            self._collected_messages[who].append(msg)
 
     def SwitchToChat(self) -> None:
         """切换到聊天页面"""
