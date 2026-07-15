@@ -212,6 +212,22 @@ class SessionBox:
         except:
             return []
     
+    def _close_search(self):
+        """关闭搜索面板并清空搜索框"""
+        try:
+            # 按 Escape 关闭搜索面板
+            self.control.SendKeys('{Escape}')
+            time.sleep(0.1)
+        except:
+            pass
+        try:
+            # 如果搜索面板还在，点击空白区域关闭
+            if self.search_content.Exists(0):
+                self.control.MiddleClick()
+                time.sleep(0.1)
+        except:
+            pass
+
     def switch_chat(
         self,
         keywords: str, 
@@ -235,12 +251,10 @@ class SessionBox:
             try:
                 search_box = self.search_content.ListControl()
                 if not search_box.Exists(1):
-                    if self.search_content.Exists(0):
-                        self.control.MiddleClick()
+                    self._close_search()
                     return None
             except:
-                if self.search_content.Exists(0):
-                    self.control.MiddleClick()
+                self._close_search()
                 return None
             
             t0 = time.time()
@@ -255,13 +269,11 @@ class SessionBox:
                     time.sleep(0.1)
             
             if not search_result_items:
-                if self.search_content.Exists(0):
-                    self.control.MiddleClick()
+                self._close_search()
                 return None
             
             matched_items = []
             current_section = 'contact'  # 默认为联系人（新版微信可能没有分类头）
-            has_section_header = False
             
             # 分类头关键词（用于识别分区标题）
             section_headers = {
@@ -277,17 +289,17 @@ class SessionBox:
                     if not text:
                         continue
                     
-                    skip_keywords = ['搜索网络结果', '搜索建议', '查看更多']
-                    if any(keyword in text for keyword in skip_keywords):
-                        continue
-                    
-                    # 检查是否是分类头
+                    # 优先检查分区头（必须在 skip_keywords 之前，否则"搜索网络结果"会被跳过而不更新分区）
                     if text in section_headers:
                         current_section = section_headers[text]
-                        has_section_header = True
                         continue
                     elif '搜索网络结果' in text or '网络' in text:
                         current_section = None
+                        continue
+                    
+                    # 跳过非联系人项
+                    skip_keywords = ['搜索建议', '查看更多']
+                    if any(keyword in text for keyword in skip_keywords):
                         continue
                     
                     main_text = text.split('\n')[0].split('包含:')[0].strip()
@@ -319,8 +331,8 @@ class SessionBox:
                             is_match = True
                             match_text = main_text if main_text else text
                     
-                    # 新版微信可能没有分类头，默认允许联系人/群聊类型匹配
-                    if is_match and current_section in ['contact', 'group', 'function', None]:
+                    # 只匹配联系人/群聊/功能类型的结果（None表示网络搜索区域，不匹配）
+                    if is_match and current_section in ['contact', 'group', 'function']:
                         item_type = current_section if current_section in ['contact', 'group'] else 'contact'
                         matched_items.append({
                             'item': search_result_item,
@@ -333,8 +345,7 @@ class SessionBox:
                     continue
             
             if not matched_items:
-                if self.search_content.Exists(0):
-                    self.control.MiddleClick()
+                self._close_search()
                 return None
             
             type_priority = {'contact': 0, 'group': 1}
@@ -346,16 +357,11 @@ class SessionBox:
                 time.sleep(0.2)
                 return selected['text']
             except:
-                if self.search_content.Exists(0):
-                    self.control.MiddleClick()
+                self._close_search()
                 return None
             
         except:
-            if self.search_content.Exists(0):
-                try:
-                    self.control.MiddleClick()
-                except:
-                    pass
+            self._close_search()
             return None
 
     def open_separate_window(self, name: str):

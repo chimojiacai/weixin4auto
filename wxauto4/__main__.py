@@ -34,7 +34,11 @@ def main():
             if resp.is_success:
                 print(f'[成功] 已向 {args.target} 发送消息')
             else:
-                print(f'[失败] {resp.get("message", "未知错误")}')
+                msg = resp.get("message", "未知错误")
+                if '未找到' in msg:
+                    print(f'[失败] 找不到联系人「{args.target}」，请确认昵称是否正确')
+                else:
+                    print(f'[失败] {msg}')
         except Exception as e:
             print(f'[错误] {e}')
             sys.exit(1)

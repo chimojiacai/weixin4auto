@@ -338,12 +338,12 @@ class WeChatMainWnd(WeChatSubWnd):
                 switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
                 if not switch_result:
                     return None
-            
-            # 搜索切换后，重新查找聊天控件（新版微信控件树可能变化）
-            self._refresh_chatbox_control()
-            if self._chat_api.msgbox.Exists(0.5):
-                return self._chat_api
-            return None
+                
+                # 搜索切换后，重新查找聊天控件（新版微信控件树可能变化）
+                self._refresh_chatbox_control()
+                if self._chat_api.msgbox.Exists(0.5):
+                    return self._chat_api
+                return None
 
     def switch_chat(
             self, 
