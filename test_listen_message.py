@@ -32,6 +32,14 @@ def on_message(msg, chat):
     msg_type = getattr(msg, 'type', 'unknown')
     print(f"  [{sender}] ({msg_type}) {msg.content}")
 
+    # 图片消息自动下载
+    if msg_type == 'image':
+        result = msg.download()
+        if result.is_success:
+            print(f"  [下载] 图片已保存: {result['data']['path']}")
+        else:
+            print(f"  [下载] {result['message']}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="消息监听测试")

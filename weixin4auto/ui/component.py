@@ -194,7 +194,7 @@ class SearchNewFriendWnd(BaseUISubWnd):
 
 class WeChatImage(BaseUISubWnd):
     _win_cls_name: str = WxUI41Config.WIN_CLS_NAME
-    _win_name: str="预览"
+    _win_name: str="图片和视频"
 
     def __init__(self, parent):
         self.parent = parent

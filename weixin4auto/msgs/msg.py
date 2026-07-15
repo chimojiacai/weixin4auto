@@ -1,5 +1,6 @@
 from weixin4auto.utils.tools import (
-    detect_message_direction_by_content_position
+    detect_message_direction_by_content_position,
+    detect_message_direction_by_color
 )
 from weixin4auto import uia
 from weixin4auto.ui_config import WxUI41Config
@@ -33,9 +34,22 @@ def parse_msg_attr(
         # 通过截图内容像素位置分布判断方向（right=self, left=friend）
         msg_screenshot = control.ScreenShot()
         msg_direction, msg_direction_distence = detect_message_direction_by_content_position(msg_screenshot)
+        
+        # 内容位置检测失败时，回退到气泡颜色检测
+        if msg_direction is None:
+            msg_direction, color_confidence = detect_message_direction_by_color(msg_screenshot)
+            if msg_direction is not None:
+                msg_direction_distence = color_confidence
+        
         os.remove(msg_screenshot)
         
         msg_attr = msg_direction_hash.get(msg_direction)
+        
+        # 方向仍无法判断时，默认归为 friend（避免消息丢失）
+        if msg_attr is None:
+            msg_attr = 'friend'
+            msg_direction = 'left'
+            msg_direction_distence = 0.0
 
         additonal_attr = {
             'direction': msg_direction,

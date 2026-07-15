@@ -165,40 +165,9 @@ class BaseMessage(Message, ABC):
         self.root = parent.root
         self.id = self.control.runtimeid
         
-        # 优化：对于图片等消息，优先从子控件中获取内容
-        # 消息控件可能包含多个子控件，需要找到正确的消息类型和内容
-        main_name = self.control.Name or ""
-        content_name = main_name
-        
-        # 检查子控件，找到真正的消息内容
-        # 优先级：图片 > 动画表情 > 其他特殊类型 > 文本
-        try:
-            children = control.GetChildren()
-            found_image = False
-            found_emoji = False
-            
-            for child in children:
-                child_name = child.Name or ""
-                child_classname = child.ClassName
-                
-                # 优先检查 ChatBubbleReferItemView（图片、动画表情等）
-                if child_classname == 'mmui::ChatBubbleReferItemView':
-                    if child_name == "图片":
-                        content_name = "图片"
-                        found_image = True
-                        break  # 找到图片，直接使用
-                    elif child_name == "动画表情":
-                        content_name = "动画表情"
-                        found_emoji = True
-                        # 继续检查是否有图片（图片优先级更高）
-                
-                # 如果已经找到图片，不再检查其他类型
-                if found_image:
-                    break
-        except:
-            pass
-        
-        self.content = content_name
+        # 提取消息内容
+        # 优先从子控件中获取真正的消息类型（图片、动画表情等）
+        self.content = self._extract_content()
         
         # 提取发送者信息（特别是群消息）
         self.sender = None
@@ -251,6 +220,31 @@ class BaseMessage(Message, ABC):
         rect = self.control.BoundingRectangle
         self.hash_text = f'({rect.height()},{rect.width()}){self.content}'
         self.hash = md5(self.hash_text.encode()).hexdigest()
+
+    def _extract_content(self) -> str:
+        """提取消息内容，支持图片、动画表情等特殊消息类型"""
+        main_name = self.control.Name or ""
+        
+        # 检查子控件，找到真正的消息内容
+        try:
+            children = self.control.GetChildren()
+            for child in children:
+                child_name = child.Name or ""
+                child_classname = child.ClassName
+                
+                # ChatBubbleReferItemView：图片、动画表情等
+                if child_classname == 'mmui::ChatBubbleReferItemView':
+                    if child_name in ("图片", "动画表情"):
+                        return child_name
+                
+                # ChatTextItemView 子控件的 Name 也可能是消息类型标识
+                elif child_classname == 'mmui::ChatTextItemView':
+                    if child_name in ("图片", "动画表情"):
+                        return child_name
+        except:
+            pass
+        
+        return main_name
 
     def __repr__(self):
         cls_name = self.__class__.__name__
