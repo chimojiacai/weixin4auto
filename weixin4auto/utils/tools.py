@@ -130,6 +130,175 @@ def delete_update_files():
 #                                                           消息解析方法
 # ============================================================================================================================================
 
+def detect_message_direction_by_color(
+    image_path: str,
+    green_threshold: float = 1.3,
+) -> tuple:
+    """通过气泡颜色判断消息方向。
+    
+    微信的气泡颜色：
+    - 自己发的消息：绿色气泡 (RGB 中 G 通道明显高于 R 和 B)
+    - 好友发的消息：白色/浅灰色气泡 (RGB 三通道接近)
+    
+    Args:
+        image_path: 消息截图路径
+        green_threshold: 绿色通道超过其他通道平均值的倍数阈值
+    
+    Returns:
+        tuple: (direction, confidence) - 'left'/'right' 和置信度 (0-1)
+    """
+    try:
+        img = Image.open(image_path)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        w, h = img.size
+        pixels = img.load()
+        
+        # 只扫描中间区域（避免边缘干扰）
+        y_start = int(h * 0.2)
+        y_end = int(h * 0.8)
+        x_start = int(w * 0.1)
+        x_end = int(w * 0.9)
+        
+        green_pixel_count = 0
+        white_pixel_count = 0
+        total_sampled = 0
+        
+        # 采样检测（每隔几个像素采样一次，提高性能）
+        step = max(1, (x_end - x_start) // 100)
+        for y in range(y_start, y_end, step):
+            for x in range(x_start, x_end, step):
+                r, g, b = pixels[x, y]
+                total_sampled += 1
+                
+                # 检测绿色像素（微信自己发的消息气泡是绿色的）
+                # 绿色特征：G 通道明显高于 R 和 B
+                avg_rb = (r + b) / 2 if (r + b) > 0 else 1
+                if g > avg_rb * green_threshold and g > 100:
+                    green_pixel_count += 1
+                
+                # 检测白色/浅灰像素（好友消息气泡）
+                # 白色特征：RGB 三通道都较高且接近
+                if r > 200 and g > 200 and b > 200:
+                    max_diff = max(r, g, b) - min(r, g, b)
+                    if max_diff < 30:
+                        white_pixel_count += 1
+        
+        if total_sampled == 0:
+            return None, 0.0
+        
+        green_ratio = green_pixel_count / total_sampled
+        white_ratio = white_pixel_count / total_sampled
+        
+        from weixin4auto.logger import wxlog
+        wxlog.debug(f"[颜色检测] green_ratio={green_ratio:.4f}, white_ratio={white_ratio:.4f}, green_count={green_pixel_count}, white_count={white_pixel_count}")
+        
+        # 如果有明显的绿色像素，判断为自己发的（右侧）
+        if green_ratio > 0.01:  # 绿色像素占比超过 1%
+            confidence = min(green_ratio * 50, 1.0)  # 置信度基于绿色像素占比
+            return 'right', confidence
+        
+        # 如果有大量白色像素但几乎没有绿色，判断为好友发的（左侧）
+        if white_ratio > 0.05 and green_ratio < 0.005:
+            confidence = min(white_ratio * 10, 1.0)
+            return 'left', confidence
+        
+        return None, 0.0
+    except Exception as e:
+        return None, 0.0
+
+
+def detect_message_direction_by_content_position(
+    image_path: str,
+    step: int = 2,
+) -> tuple:
+    """通过截图中内容像素的位置分布判断消息方向。
+    
+    原理：微信4.1的 UIA 控件宽度相同（全宽），但实际气泡在截图中的位置不同：
+    - 自己发的消息：气泡在截图右侧，文本像素集中在右半边
+    - 好友发的消息：气泡在截图左侧，文本像素集中在左半边
+    
+    通过分析非背景像素的左右分布来判断方向，与颜色检测互补。
+    
+    Args:
+        image_path: 消息截图路径
+        step: 采样步长（2=每2个像素采样一次）
+    
+    Returns:
+        tuple: (direction, confidence) - 'left'/'right' 和置信度 (0-1)
+    """
+    try:
+        img = Image.open(image_path)
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        w, h = img.size
+        pixels = img.load()
+        
+        # 扫描区域：中间 60% 高度，跳过上下边缘
+        y_start = int(h * 0.2)
+        y_end = int(h * 0.8)
+        # 跳过左右 5% 边缘（避免控件边界干扰）
+        x_start = int(w * 0.05)
+        x_end = int(w * 0.95)
+        mid_x = (x_start + x_end) // 2
+        
+        left_content = 0
+        right_content = 0
+        
+        for y in range(y_start, y_end, step):
+            for x in range(x_start, x_end, step):
+                r, g, b = pixels[x, y]
+                brightness = (r + g + b) / 3
+                max_c = max(r, g, b)
+                min_c = min(r, g, b)
+                
+                # 判断是否为“背景”像素（聊天窗口底色）
+                # 背景特征：非常亮（接近白色）或非常暗（接近黑色），且无色差
+                is_bg = False
+                if max_c - min_c < 20:  # 灰度像素（无色差）
+                    if brightness > 235 or brightness < 20:
+                        is_bg = True
+                
+                # 额外排除浅灰/浅绿背景（聊天窗口底色通常很均匀）
+                # 如果颜色非常均匀（色差极小）且较亮，也是背景
+                if max_c - min_c < 8 and brightness > 220:
+                    is_bg = True
+                
+                if not is_bg:
+                    if x < mid_x:
+                        left_content += 1
+                    else:
+                        right_content += 1
+        
+        total = left_content + right_content
+        if total < 20:  # 内容像素太少，无法判断
+            return None, 0.0
+        
+        # 计算分布比例
+        right_ratio = right_content / total
+        left_ratio = left_content / total
+        diff = abs(right_ratio - left_ratio)
+        
+        from weixin4auto.logger import wxlog
+        wxlog.debug(f"[内容位置] left={left_content}, right={right_content}, diff={diff:.3f}")
+        
+        # 需要明显差异（>10%）才判断，避免误判
+        if diff < 0.10:
+            return None, 0.0
+        
+        if right_ratio > left_ratio:
+            # 内容集中在右侧 → 自己发的消息
+            confidence = min(diff * 3, 1.0)
+            return 'right', confidence
+        else:
+            # 内容集中在左侧 → 好友发的消息
+            confidence = min(diff * 3, 1.0)
+            return 'left', confidence
+            
+    except Exception as e:
+        return None, 0.0
+
+
 def detect_message_direction(
     image_path: str,
     avatar_height_ratio: float = 0.8,

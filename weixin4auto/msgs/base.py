@@ -161,6 +161,7 @@ class BaseMessage(Message, ABC):
         self.control = control
         self.direction = additonal_attr.get('direction', None)
         self.distince = additonal_attr.get('direction_distence', None)
+        self.detect_method = additonal_attr.get('detect_method', 'unknown')
         self.root = parent.root
         self.id = self.control.runtimeid
         
@@ -198,6 +199,55 @@ class BaseMessage(Message, ABC):
             pass
         
         self.content = content_name
+        
+        # 提取发送者信息（特别是群消息）
+        self.sender = None
+        self.sender_remark = None
+        if self.attr == 'friend':
+            # 尝试从控件结构中提取发送者名称
+            try:
+                children = control.GetChildren()
+                for child in children:
+                    child_name = (child.Name or "").strip()
+                    child_classname = child.ClassName
+                    
+                    # 查找发送者标签控件（通常是 TextControl 且在消息内容之前）
+                    if child_classname in ['mmui::ChatBubbleNickNameView', 'ChatBubbleNickNameView']:
+                        if child_name and len(child_name) < 50:
+                            self.sender = child_name
+                            break
+                    
+                    # 或者检查子控件名称是否包含换行符（发送者\n内容 格式）
+                    elif '\n' in child_name:
+                        parts = child_name.split('\n', 1)
+                        if len(parts) >= 2:
+                            potential_sender = parts[0].strip()
+                            potential_content = parts[1].strip()
+                            # 发送者通常较短，且不包含消息内容关键词
+                            if (potential_sender and 
+                                len(potential_sender) < 30 and 
+                                potential_content and
+                                potential_sender not in ['图片', '动画表情', '视频', '文件']):
+                                self.sender = potential_sender
+                                # 更新 content 为去掉发送者的部分
+                                if potential_content:
+                                    self.content = potential_content
+                                break
+            except:
+                pass
+            
+            # 如果没找到发送者，使用聊天对象名称（单聊情况）
+            if not self.sender:
+                try:
+                    parent_parent = getattr(parent, 'parent', None)
+                    if parent_parent and hasattr(parent_parent, 'nickname'):
+                        self.sender = parent_parent.nickname
+                except:
+                    pass
+        
+        elif self.attr == 'self':
+            self.sender = '我'
+        
         rect = self.control.BoundingRectangle
         self.hash_text = f'({rect.height()},{rect.width()}){self.content}'
         self.hash = md5(self.hash_text.encode()).hexdigest()
@@ -255,6 +305,7 @@ class BaseMessage(Message, ABC):
         info['attr'] = getattr(self, 'attr', 'unknown')  # 'self' 或 'friend' 或 'system'
         info['direction'] = getattr(self, 'direction', None)  # 'left' 或 'right'
         info['direction_distance'] = getattr(self, 'distince', None)  # 距离值
+        info['detect_method'] = getattr(self, 'detect_method', 'unknown')  # 使用的检测方法
         
         # 3. 聊天信息
         # 完全依赖父窗口的 nickname（窗口标题），避免调用 ChatInfo() 可能触发的点击操作
@@ -282,48 +333,17 @@ class BaseMessage(Message, ABC):
         info['is_group'] = False
         info['group_member_count'] = 0
         
-        # 4. 发送者信息
-        sender = '未知'
-        sender_remark = None
-        
-        # 如果是单聊且是好友发送的消息，发送者=聊天对象
-        if not info['is_group'] and info['attr'] == 'friend':
+        # 4. 发送者信息（优先使用 __init__ 时提取的 sender）
+        if hasattr(self, 'sender') and self.sender:
+            sender = self.sender
+        elif info['attr'] == 'self':
+            sender = '我'
+        elif info['attr'] == 'friend':
             sender = info['chat_name']
         else:
-            # 尝试从消息对象获取发送者
-            if hasattr(self, 'sender'):
-                sender = self.sender
-            if hasattr(self, 'sender_remark'):
-                sender_remark = self.sender_remark
-            
-            # 如果是群聊且是好友发送的消息，尝试从消息控件中提取发送者
-            # 注意：暂时禁用子控件访问，避免触发点击操作
-            # if info['is_group'] and info['attr'] == 'friend':
-            #     try:
-            #         children = self.control.GetChildren()
-            #         for child in children:
-            #             child_name = getattr(child, 'Name', '')
-            #             if child_name and child_name.strip():
-            #                 # 如果子控件名称包含换行符，可能是"发送者\n内容"格式
-            #                 if '\n' in child_name:
-            #                     parts = child_name.split('\n', 1)
-            #                     if len(parts) >= 2:
-            #                         potential_sender = parts[0].strip()
-            #                         if potential_sender and len(potential_sender) < 50:
-            #                             sender = potential_sender
-            #                             break
-            #                 # 或者检查是否有单独的发送者控件
-            #                 elif child.ControlTypeName in ['TextControl', 'ButtonControl']:
-            #                     if child_name and child_name != info['content'] and len(child_name) < 50:
-            #                         if child_name not in info['content']:
-            #                             sender = child_name
-            #                             break
-            #     except:
-            #         pass
+            sender = '未知'
         
-        # 如果是自己发送的消息
-        if info['attr'] == 'self':
-            sender = '我'
+        sender_remark = getattr(self, 'sender_remark', None)
         
         info['sender'] = sender
         if sender_remark and sender_remark != sender:

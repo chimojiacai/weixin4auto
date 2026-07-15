@@ -479,12 +479,23 @@ class WeChat(Chat, Listener):
         Args:
             remove (bool, optional): 是否移除监听对象. Defaults to True.
         """
-        while self._listener_thread.is_alive():
-            self._listener_stop()
+        try:
+            while self._listener_thread.is_alive():
+                self._listener_stop()
+        except Exception:
+            pass
+        
         if remove:
             listen = self.listen.copy()
             for who in listen:
-                self.RemoveListenChat(who)
+                try:
+                    self.RemoveListenChat(who)
+                except KeyboardInterrupt:
+                    # Ctrl+C 退出时，直接清理数据，不再尝试关闭窗口
+                    self.listen.clear()
+                    break
+                except Exception:
+                    pass
 
     def StartListening(self) -> None:
         if not self._listener_thread.is_alive():
