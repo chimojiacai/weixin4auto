@@ -2,7 +2,7 @@
 
 This script demonstrates how to drive the public interfaces exposed by
 :mod:`wxauto4`.  It keeps the implementation defensive so that it can be run on
-real WeChat instances without crashing when certain UI elements are missing.
+real WeChat instances without crashing when certain UI elements are missing .
 
 Usage examples
 --------------
