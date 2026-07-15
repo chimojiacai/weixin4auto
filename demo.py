@@ -1,7 +1,7 @@
-"""Comprehensive wxauto4 demo script.
+"""Comprehensive weixin4auto demo script.
 
 This script demonstrates how to drive the public interfaces exposed by
-:mod:`wxauto4`.  It keeps the implementation defensive so that it can be run on
+:mod:`weixin4auto`.  It keeps the implementation defensive so that it can be run on
 real WeChat instances without crashing when certain UI elements are missing .
 
 Usage examples
@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from wxauto4 import Moment, WeChat, WxParam, WxResponse, wxlog
+from weixin4auto import Moment, WeChat, WxParam, WxResponse, wxlog
 
 
 def _format_files(files: Iterable[str]) -> List[str]:
@@ -70,7 +70,7 @@ def _print_response(title: str, response: WxResponse) -> None:
 
 
 class WeChatDemo:
-    """Aggregate high-level demonstrations of wxauto4 features."""
+    """Aggregate high-level demonstrations of weixin4auto features."""
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -294,7 +294,7 @@ class WeChatDemo:
 # ----------------------------------------------------------------------
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="wxauto4 功能演示脚本")
+    parser = argparse.ArgumentParser(description="weixin4auto 功能演示脚本")
     parser.add_argument("--target", help="聊天对象昵称", default=None)
     parser.add_argument("--message", help="要发送的消息内容", default=None)
     parser.add_argument("--keep-editor", help="发送消息后保留输入框内容", action="store_true")
