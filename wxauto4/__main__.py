@@ -24,6 +24,13 @@ def main():
     send_parser.add_argument('--exact', action='store_true', default=True, help='精确匹配（默认开启）')
     send_parser.add_argument('--no-exact', dest='exact', action='store_false', help='模糊匹配')
     
+    # send_files 命令
+    file_parser = subparsers.add_parser('send_files', help='发送文件/图片给指定联系人')
+    file_parser.add_argument('target', type=str, help='聊天对象昵称')
+    file_parser.add_argument('files', type=str, nargs='+', help='文件路径（支持多个）')
+    file_parser.add_argument('--exact', action='store_true', default=True, help='精确匹配（默认开启）')
+    file_parser.add_argument('--no-exact', dest='exact', action='store_false', help='模糊匹配')
+    
     args = parser.parse_args()
 
     if args.command == 'send_msg':
@@ -39,6 +46,31 @@ def main():
                     print(f'[失败] 找不到联系人「{args.target}」，请确认昵称是否正确')
                 else:
                     print(f'[失败] {msg}')
+        except Exception as e:
+            print(f'[错误] {e}')
+            sys.exit(1)
+    elif args.command == 'send_files':
+        from wxauto4 import WeChat
+        import os
+        try:
+            # 校验文件
+            for f in args.files:
+                if not os.path.isfile(f):
+                    print(f'[错误] 文件不存在：{f}')
+                    sys.exit(1)
+            wx = WeChat()
+            resp = wx.SendFiles(filepath=args.files, who=args.target, exact=args.exact)
+            if resp.is_success:
+                names = ', '.join(os.path.basename(f) for f in args.files)
+                print(f'[成功] 已向 {args.target} 发送文件：{names}')
+            else:
+                msg = resp.get("message", "未知错误")
+                if '未找到' in msg:
+                    print(f'[失败] 找不到联系人「{args.target}」，请确认昵称是否正确')
+                else:
+                    print(f'[失败] {msg}')
+        except SystemExit:
+            raise
         except Exception as e:
             print(f'[错误] {e}')
             sys.exit(1)

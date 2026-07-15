@@ -226,18 +226,31 @@ class ChatBox(BaseUISubWnd):
 
         return self.send_text(content)
     
-    # @uilock
     def send_file(self, file_path):
+        """发送文件/图片
+        
+        Args:
+            file_path: 文件路径（str）或文件路径列表（list）
+            
+        Returns:
+            WxResponse: 发送结果
+        """
         if isinstance(file_path, str):
             file_path = [file_path]
         file_path = [os.path.abspath(f) for f in file_path]
+        
+        # 校验文件是否存在
+        for f in file_path:
+            if not os.path.isfile(f):
+                return WxResponse.failure(f'文件不存在：{f}')
         
         self.clear_edit()
 
         SetClipboardFiles(file_path)
         self.editbox.SendKeys('{Ctrl}v')
-        time.sleep(0.3)
+        time.sleep(0.5)
         self._send()
+        return WxResponse.success('success')
 
     def input_at(self, at_list):
         if isinstance(at_list, str):
