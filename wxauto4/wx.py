@@ -227,9 +227,14 @@ class WeChat(Chat, Listener):
         self.SessionBox = self._api._session_api
         self.ChatBox = self._api._chat_api
         self.Moment = Moment(self)
-        # nickname 已经在 WeChatMainWnd 初始化时从导航栏头像获取了
+        # nickname 已经在 WeChatMainWnd 初始化时从头像弹窗获取了
         self.nickname = self._api.nickname
         self.listen = {}
+        
+        # 唤起微信窗口到前台并打印昵称
+        self._api._show()
+        print(f'微信用户昵称: {self.nickname}')
+        
         if start_listener:
             self._listener_start()
         if debug:
@@ -430,11 +435,11 @@ class WeChat(Chat, Listener):
 
     def SwitchToChat(self) -> None:
         """切换到聊天页面"""
-        self._api._navigation_api.chat_icon.Click()
+        self._api._navigation_api.switch_to_chat_page()
 
     def SwitchToContact(self) -> None:
         """切换到联系人页面"""
-        self._api._navigation_api.contact_icon.Click()
+        self._api._navigation_api.switch_to_contact_page()
 
     def SwitchToFavorites(self) -> None:
         """切换到收藏页面"""

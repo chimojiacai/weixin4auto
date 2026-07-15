@@ -155,9 +155,9 @@ class WeChatMainWnd(WeChatSubWnd):
             if len(wxs) == 0:
                 # 尝试查找所有可能的窗口类名
                 possible_classes = [
-                    self._win_cls_name,  # 当前配置的类名
-                    'Qt51514QWindowIcon',  # Qt 5.15.14
-                    'Qt6QWindowIcon',  # Qt 6
+                    self._win_cls_name,
+                    'Qt51514QWindowIcon',
+                    'Qt6QWindowIcon',
                 ]
                 all_wxs = []
                 for cls in possible_classes:
@@ -174,7 +174,6 @@ class WeChatMainWnd(WeChatSubWnd):
                     )
                     raise Exception(error_msg)
                 
-                # 使用找到的窗口
                 wxs = all_wxs
             
             for index, (hwnd, clsname, winname) in enumerate(wxs):
@@ -185,15 +184,21 @@ class WeChatMainWnd(WeChatSubWnd):
                     raise Exception(f'未找到微信窗口：{nickname}')
         # if NetErrInfoTipsBarWnd(self):
         #     raise NetWorkError('微信无法连接到网络')
-        
-        print(f'初始化成功，获取到已登录窗口：{self.nickname}')
 
     def _setup_ui(self, hwnd: int):
         self.HWND = hwnd
         self.control = uia.ControlFromHandle(hwnd)
         if self.control is not None:
-            navigation_control = self.control.\
-                ToolBarControl(ClassName=WxUI41Config.NAVIGATION_BAR_CLS, AutomationId=WxUI41Config.NAVIGATION_BAR_AUTOMATION_ID)
+            # 尝试查找导航栏，新版微信可能没有 mmui::MainTabBar
+            navigation_control = None
+            try:
+                navigation_control = self.control.\
+                    ToolBarControl(ClassName=WxUI41Config.NAVIGATION_BAR_CLS, AutomationId=WxUI41Config.NAVIGATION_BAR_AUTOMATION_ID)
+                if not navigation_control.Exists(0.5):
+                    navigation_control = None
+            except:
+                navigation_control = None
+            
             sessionbox_control = self.control.\
                 GroupControl(ClassName=WxUI41Config.SESSION_BOX_CLS)
             chatbox_control = self.control.\
@@ -203,12 +208,11 @@ class WeChatMainWnd(WeChatSubWnd):
             self._session_api = SessionBox(sessionbox_control, self)
             self._chat_api = ChatBox(chatbox_control, self)
             
-            # 尝试从导航栏头像获取昵称
+            # 获取用户昵称
             user_nickname = self._navigation_api.get_user_nickname()
             if user_nickname:
                 self.nickname = user_nickname
             else:
-                # 如果获取失败，使用窗口标题
                 self.nickname = self.control.Name
 
     def __repr__(self):

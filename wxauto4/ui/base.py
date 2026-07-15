@@ -29,11 +29,10 @@ class BaseUIWnd(ABC):
         if not hasattr(self, 'HWND'):
             self.HWND = self.control.GetTopLevelControl().NativeWindowHandle
         
-        # 优化：检查窗口是否已经在前台，如果是就不需要重复操作
+        # 检查窗口是否已经在前台
         try:
             from wxauto4.utils.win32 import is_window_visible
             foreground_hwnd = win32gui.GetForegroundWindow()
-            # 如果窗口已经在前台且可见，跳过显示操作
             if foreground_hwnd == self.HWND and is_window_visible(self.HWND):
                 return
         except:
@@ -43,13 +42,12 @@ class BaseUIWnd(ABC):
         win32gui.SetWindowPos(self.HWND, -1, 0, 0, 0, 0, 3)
         win32gui.SetWindowPos(self.HWND, -2, 0, 0, 0, 0, 3)
         self.control.Show()
-        # 将窗口移到屏幕中央（在窗口显示后，减少等待时间）
+        
+        # 将窗口移到屏幕中央
         try:
-            # 移除等待，直接尝试移动窗口（窗口显示通常是即时的）
             if hasattr(self.control, 'MoveToCenter') and self.control.IsTopLevel():
                 self.control.MoveToCenter()
             else:
-                # 如果MoveToCenter不可用，手动计算并移动
                 rect = win32gui.GetWindowRect(self.HWND)
                 window_width = rect[2] - rect[0]
                 window_height = rect[3] - rect[1]
@@ -57,7 +55,7 @@ class BaseUIWnd(ABC):
                 screen_height = ctypes.windll.user32.GetSystemMetrics(1)
                 x = (screen_width - window_width) // 2
                 y = (screen_height - window_height) // 2
-                win32gui.SetWindowPos(self.HWND, 0, x, y, 0, 0, 0x0001)  # SWP_NOSIZE
+                win32gui.SetWindowPos(self.HWND, 0, x, y, 0, 0, 0x0001)
         except:
             pass
 
@@ -89,5 +87,3 @@ class BaseUISubWnd(BaseUIWnd):
             return self.parent._lang(text)
         else:
             return self.root._lang(text)
-
-

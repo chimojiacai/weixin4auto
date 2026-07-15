@@ -16,12 +16,25 @@ class NavigationBox:
         self.init()
 
     def init(self):
-        # 获取头像按钮（在"微信"按钮上面，通常是第一个按钮）
         self.my_icon = None
+        
+        if self.control is None:
+            # 新版微信可能没有导航栏 ToolBar，所有图标设为 None
+            self.chat_icon = None
+            self.contact_icon = None
+            self.favorites_icon = None
+            self.files_icon = None
+            self.moments_icon = None
+            self.browser_icon = None
+            self.video_icon = None
+            self.stories_icon = None
+            self.mini_program_icon = None
+            self.phone_icon = None
+            self.settings_icon = None
+            return
+        
         try:
-            # 获取导航栏的所有按钮
             buttons = self.control.GetChildren()
-            # 头像按钮通常是第一个按钮（在"微信"按钮上面）
             if buttons:
                 self.my_icon = buttons[0]
         except:
@@ -42,38 +55,68 @@ class NavigationBox:
     def get_user_nickname(self) -> str:
         """获取当前登录者的昵称
         
-        点击导航栏的头像按钮，获取弹出组件的name作为昵称
+        点击头像区域（"微信"按钮上方40px），获取弹出组件的name作为昵称
         
         Returns:
             str: 当前登录者的昵称，如果获取失败返回空字符串
         """
         try:
-            # 唤起微信窗口到前台并居中
             self.parent._show()
-            time.sleep(0.1)  # 减少等待时间：从0.3秒减少到0.1秒
+            time.sleep(0.2)
             
-            # 找到"微信"按钮并计算头像按钮位置
-            chat_button = self.chat_icon
-            if not chat_button.Exists(0.3):  # 减少超时时间：从0.5秒减少到0.3秒
+            # 查找"微信"按钮：优先用导航栏的 chat_icon，否则从主窗口直接查找
+            chat_button = None
+            if self.chat_icon is not None:
+                try:
+                    if self.chat_icon.Exists(0.5):
+                        chat_button = self.chat_icon
+                except:
+                    pass
+            
+            if chat_button is None:
+                main_control = self.parent.control
+                if main_control is not None:
+                    try:
+                        btn = main_control.ButtonControl(Name=self._lang('微信'))
+                        if btn.Exists(1):
+                            chat_button = btn
+                    except:
+                        pass
+            
+            if chat_button is None:
                 return ""
             
+            # 获取"微信"按钮的位置，在其上方40px处点击头像
             rect = chat_button.BoundingRectangle
-            button_height = rect.bottom - rect.top
-            button_width = rect.right - rect.left
-            avatar_x = rect.left + button_width // 2
-            avatar_y = rect.top - button_height
+            avatar_x = (rect.left + rect.right) // 2
+            avatar_y = (rect.top + rect.bottom) // 2 - 40
             if avatar_y < 0:
-                avatar_y = max(0, rect.top - 30)
+                avatar_y = max(0, rect.top - 40)
             
-            # 点击头像按钮
+            # 点击头像区域
             uia.Click(avatar_x, avatar_y)
-            time.sleep(0.3)  # 减少等待时间：从0.5秒减少到0.3秒
+            time.sleep(0.5)
             
-            # 从弹窗窗口中查找ContactHeadView控件
+            # 从弹窗窗口中查找昵称
             nickname = ""
             try:
-                wins = GetAllWindows(classname=WxUI41Config.MENU_WIN_CLS, name="Weixin")
-                for win in wins:
+                menu_cls = WxUI41Config.MENU_WIN_CLS
+                
+                # 尝试多种窗口名和类名组合
+                all_wins = []
+                for combo in [{'classname': menu_cls, 'name': 'Weixin'}, {'classname': menu_cls}]:
+                    wins = GetAllWindows(**combo)
+                    all_wins.extend(wins)
+                
+                # 去重
+                seen_hwnds = set()
+                unique_wins = []
+                for w in all_wins:
+                    if w[0] not in seen_hwnds:
+                        seen_hwnds.add(w[0])
+                        unique_wins.append(w)
+                
+                for win in unique_wins:
                     control = uia.ControlFromHandle(win[0])
                     if control.ClassName in ['mmui::ProfileUniquePop', 'mmui::XPopover', WxUI41Config.MENU_CLS]:
                         # 从弹窗中查找ContactHeadView控件
@@ -116,15 +159,17 @@ class NavigationBox:
             
             # 关闭弹出组件
             try:
-                self.chat_icon.Click()
-                time.sleep(0.1)
+                if chat_button:
+                    chat_button.Click()
+                    time.sleep(0.1)
             except:
                 pass
             
             return nickname.strip() if nickname else ""
         except:
             try:
-                self.chat_icon.Click()
+                if self.chat_icon:
+                    self.chat_icon.Click()
             except:
                 pass
             return ""
@@ -133,35 +178,34 @@ class NavigationBox:
         return text
 
     def switch_to_chat_page(self):
-        self.chat_icon.Click()
+        if self.chat_icon: self.chat_icon.Click()
 
     def switch_to_contact_page(self):
-        self.contact_icon.Click()
+        if self.contact_icon: self.contact_icon.Click()
 
     def switch_to_favorites_page(self):
-        self.favorites_icon.Click()
+        if self.favorites_icon: self.favorites_icon.Click()
 
     def switch_to_files_page(self):
-        self.files_icon.Click()
+        if self.files_icon: self.files_icon.Click()
 
     def switch_to_browser_page(self):
-        self.browser_icon.Click()
+        if self.browser_icon: self.browser_icon.Click()
 
     def switch_to_moments_page(self):
-        self.moments_icon.Click()
+        if self.moments_icon: self.moments_icon.Click()
 
     def switch_to_video_page(self):
-        self.video_icon.Click()
+        if self.video_icon: self.video_icon.Click()
 
     def switch_to_stories_page(self):
-        self.stories_icon.Click()
+        if self.stories_icon: self.stories_icon.Click()
 
     def switch_to_mini_program_page(self):
-        self.mini_program_icon.Click()
+        if self.mini_program_icon: self.mini_program_icon.Click()
 
     def switch_to_phone_page(self):
-        self.phone_icon.Click()
+        if self.phone_icon: self.phone_icon.Click()
 
     def switch_to_settings_page(self):
-        self.settings_icon.Click()
-
+        if self.settings_icon: self.settings_icon.Click()
