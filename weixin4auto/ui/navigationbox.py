@@ -6,6 +6,7 @@ from weixin4auto.param import (
 from weixin4auto.utils.win32 import GetAllWindows
 from weixin4auto.ui_config import WxUI41Config
 from weixin4auto.logger import wxlog
+import ctypes
 import time
 
 class NavigationBox:
@@ -52,10 +53,20 @@ class NavigationBox:
         self.phone_icon = self.control.ButtonControl(Name=self._lang('手机'))
         self.settings_icon = self.control.ButtonControl(Name=self._lang('更多'))
     
+    @staticmethod
+    def _get_dpi_scale() -> float:
+        """获取系统 DPI 缩放比例（1.0 = 100%，1.25 = 125%，1.5 = 150% 等）"""
+        try:
+            dpi = ctypes.windll.user32.GetDpiForSystem()
+            return dpi / 96.0
+        except:
+            return 1.0
+
     def get_user_nickname(self) -> str:
         """获取当前登录者的昵称
         
-        点击头像区域（"微信"按钮上方40px），获取弹出组件的name作为昵称
+        优先通过 UIA 直接点击头像控件（my_icon），
+        若不可用则根据系统 DPI 缩放比例动态计算偏移量点击。
         
         Returns:
             str: 当前登录者的昵称，如果获取失败返回空字符串
@@ -64,37 +75,52 @@ class NavigationBox:
             self.parent._show()
             time.sleep(0.2)
             
-            # 查找"微信"按钮：优先用导航栏的 chat_icon，否则从主窗口直接查找
-            chat_button = None
-            if self.chat_icon is not None:
+            # 方案一：优先使用 my_icon（头像控件）直接点击，无需计算像素
+            avatar_clicked = False
+            if self.my_icon is not None:
                 try:
-                    if self.chat_icon.Exists(0.5):
-                        chat_button = self.chat_icon
+                    if self.my_icon.Exists(0.5):
+                        self.my_icon.Click()
+                        avatar_clicked = True
                 except:
                     pass
             
-            if chat_button is None:
-                main_control = self.parent.control
-                if main_control is not None:
+            # 方案二：my_icon 不可用，查找"微信"按钮并按 DPI 缩放偏移
+            chat_button = None
+            if not avatar_clicked:
+                if self.chat_icon is not None:
                     try:
-                        btn = main_control.ButtonControl(Name=self._lang('微信'))
-                        if btn.Exists(1):
-                            chat_button = btn
+                        if self.chat_icon.Exists(0.5):
+                            chat_button = self.chat_icon
                     except:
                         pass
+                
+                if chat_button is None:
+                    main_control = self.parent.control
+                    if main_control is not None:
+                        try:
+                            btn = main_control.ButtonControl(Name=self._lang('微信'))
+                            if btn.Exists(1):
+                                chat_button = btn
+                        except:
+                            pass
+                
+                if chat_button is None:
+                    return ""
+                
+                # 根据 DPI 缩放比例动态计算偏移量（基准值 40px @ 100% DPI）
+                dpi_scale = self._get_dpi_scale()
+                base_offset = 40  # 100% DPI 下的基准偏移
+                scaled_offset = int(base_offset * dpi_scale)
+                
+                rect = chat_button.BoundingRectangle
+                avatar_x = (rect.left + rect.right) // 2
+                avatar_y = rect.top - scaled_offset
+                if avatar_y < 0:
+                    avatar_y = 0
+                
+                uia.Click(avatar_x, avatar_y)
             
-            if chat_button is None:
-                return ""
-            
-            # 获取"微信"按钮的位置，在其上方40px处点击头像
-            rect = chat_button.BoundingRectangle
-            avatar_x = (rect.left + rect.right) // 2
-            avatar_y = (rect.top + rect.bottom) // 2 - 40
-            if avatar_y < 0:
-                avatar_y = max(0, rect.top - 40)
-            
-            # 点击头像区域
-            uia.Click(avatar_x, avatar_y)
             time.sleep(0.5)
             
             # 从弹窗窗口中查找昵称
@@ -157,10 +183,11 @@ class NavigationBox:
             except:
                 pass
             
-            # 关闭弹出组件
+            # 关闭弹出组件（点击微信按钮或头像按钮关闭弹窗）
             try:
-                if chat_button:
-                    chat_button.Click()
+                close_btn = chat_button if chat_button else self.my_icon
+                if close_btn:
+                    close_btn.Click()
                     time.sleep(0.1)
             except:
                 pass
