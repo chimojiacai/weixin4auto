@@ -225,7 +225,7 @@ class BaseMessage(Message, ABC):
         """通过点击消息体头像获取发送者昵称（无感知）
         
         使用 SetWinEventHook 按微信PID过滤，拦截微信进程所有新窗口显示事件，
-        不依赖类名过滤。同时记录所有窗口事件用于诊断。
+        在弹窗渲染前将其隐藏。UIA 仍可读取隐藏窗口内容。
         
         Returns:
             str: 发送者昵称，获取失败返回空字符串
@@ -247,10 +247,9 @@ class BaseMessage(Message, ABC):
             click_x = msg_rect.left + 43
             click_y = msg_rect.top + 27
             
-            # 获取微信顶层窗口句柄和PID
+            # 获取微信进程PID
             top_hwnd = self.control.GetTopLevelControl().NativeWindowHandle
             _, wx_pid = win32process.GetWindowThreadProcessId(top_hwnd)
-            wxlog.debug(f"[头像] click=({click_x},{click_y}), top_hwnd={top_hwnd}, pid={wx_pid}")
             
             # 记录点击前微信进程已有的所有窗口（用于排除）
             existing_hwnds = set()
@@ -261,7 +260,6 @@ class BaseMessage(Message, ABC):
             
             user32 = ctypes.windll.user32
             popup_hwnd_holder = [None]
-            all_events_log = []  # 诊断日志
             
             # WinEvent 回调类型
             WINEVENTPROC = ctypes.WINFUNCTYPE(
@@ -291,20 +289,15 @@ class BaseMessage(Message, ABC):
                         return
                     
                     cls = win32gui.GetClassName(hwnd)
-                    title = win32gui.GetWindowText(hwnd)
-                    visible = win32gui.IsWindowVisible(hwnd)
-                    
-                    all_events_log.append(f"evt=0x{event:04X} cls={cls} title={title!r} vis={visible}")
                     
                     # 排除主窗口
                     if cls == main_wnd_cls:
                         return
                     
                     # 发现新窗口，立即隐藏
-                    if visible:
+                    if win32gui.IsWindowVisible(hwnd):
                         win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
                         popup_hwnd_holder[0] = hwnd
-                        wxlog.debug(f"[弹窗拦截] hwnd={hwnd}, cls={cls}, title={title!r}")
                 except:
                     pass
             
@@ -341,17 +334,9 @@ class BaseMessage(Message, ABC):
                     if popup_hwnd_holder[0] is None:
                         time.sleep(0.002)
                 
-                # 诊断：输出所有捕获的窗口事件
-                if all_events_log:
-                    wxlog.debug(f"[弹窗诊断] 共{len(all_events_log)}个事件:")
-                    for evt_line in all_events_log[:20]:
-                        wxlog.debug(f"  {evt_line}")
-                else:
-                    wxlog.debug("[弹窗诊断] 未捕获到任何窗口事件!")
-                
                 popup_hwnd = popup_hwnd_holder[0]
                 if popup_hwnd is None:
-                    wxlog.debug("[头像弹窗] 超时未检测到弹窗")
+                    wxlog.debug("[头像] 未检测到弹窗")
                     return ""
                 
                 # 弹窗已被拦截隐藏，通过 UIA 读取隐藏窗口内容
@@ -396,7 +381,7 @@ class BaseMessage(Message, ABC):
                 except:
                     pass
                 
-                wxlog.debug(f"[头像弹窗] nickname='{nickname}'")
+                wxlog.debug(f"[头像] nickname='{nickname}'")
                 return nickname.strip() if nickname else ""
             finally:
                 try:

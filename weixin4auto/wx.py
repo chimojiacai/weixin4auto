@@ -356,26 +356,24 @@ class WeChat(Chat, Listener):
                         msg_sender = getattr(msg, 'sender', None)
                         is_group = chat.is_group
                         is_friend = getattr(msg, 'attr', None) == 'friend'
-                        has_method = hasattr(msg, '_get_sender_from_avatar')
-                        sender_empty_or_group = not msg_sender or msg_sender == chat.who
+                        sender_match = not msg_sender or msg_sender == chat.who
                         wxlog.debug(
-                            f"[sender检测] is_group={is_group}, is_friend={is_friend}, "
-                            f"has_method={has_method}, sender_empty_or_group={sender_empty_or_group}, "
-                            f"msg_sender='{msg_sender}', chat.who='{chat.who}'"
+                            f"[sender] is_group={is_group}, is_friend={is_friend}, "
+                            f"sender_match={sender_match}, sender='{msg_sender}', who='{chat.who}'"
                         )
                         if (
                             is_group
                             and is_friend
-                            and has_method
-                            and sender_empty_or_group
+                            and hasattr(msg, '_get_sender_from_avatar')
+                            and sender_match
                         ):
                             try:
                                 sender_name = msg._get_sender_from_avatar()
+                                wxlog.debug(f"[sender] avatar结果: '{sender_name}'")
                                 if sender_name:
                                     msg.sender = sender_name
                             except Exception as e:
                                 wxlog.debug(f"[群聊] 获取发送者昵称失败: {e}")
-                        wxlog.debug(f"  [{msg.attr}] {who} - {msg.content}")
                         self._excutor.submit(self._safe_callback, callback, msg, chat)
             except Exception as e:
                 wxlog.debug(f"[{who}] 获取新消息失败: {e}")
