@@ -221,6 +221,193 @@ class BaseMessage(Message, ABC):
         self.hash_text = f'({rect.height()},{rect.width()}){self.content}'
         self.hash = md5(self.hash_text.encode()).hexdigest()
 
+    def _get_sender_from_avatar(self) -> str:
+        """通过点击消息体头像获取发送者昵称（无感知）
+        
+        使用 SetWinEventHook 按微信PID过滤，拦截微信进程所有新窗口显示事件，
+        不依赖类名过滤。同时记录所有窗口事件用于诊断。
+        
+        Returns:
+            str: 发送者昵称，获取失败返回空字符串
+        """
+        import time
+        import win32gui
+        import win32con
+        import win32process
+        import ctypes
+        import ctypes.wintypes
+        from weixin4auto.ui_config import WxUI41Config
+        from weixin4auto.logger import wxlog
+        
+        try:
+            self.roll_into_view()
+            
+            # 计算头像点击坐标
+            msg_rect = self.control.BoundingRectangle
+            click_x = msg_rect.left + 43
+            click_y = msg_rect.top + 27
+            
+            # 获取微信顶层窗口句柄和PID
+            top_hwnd = self.control.GetTopLevelControl().NativeWindowHandle
+            _, wx_pid = win32process.GetWindowThreadProcessId(top_hwnd)
+            wxlog.debug(f"[头像] click=({click_x},{click_y}), top_hwnd={top_hwnd}, pid={wx_pid}")
+            
+            # 记录点击前微信进程已有的所有窗口（用于排除）
+            existing_hwnds = set()
+            def _enum_existing(hwnd, _):
+                existing_hwnds.add(hwnd)
+                return True
+            win32gui.EnumWindows(_enum_existing, None)
+            
+            user32 = ctypes.windll.user32
+            popup_hwnd_holder = [None]
+            all_events_log = []  # 诊断日志
+            
+            # WinEvent 回调类型
+            WINEVENTPROC = ctypes.WINFUNCTYPE(
+                None,
+                ctypes.wintypes.HANDLE,   # hWinEventHook
+                ctypes.wintypes.DWORD,    # event
+                ctypes.wintypes.HANDLE,   # hwnd
+                ctypes.wintypes.LONG,     # idObject
+                ctypes.wintypes.LONG,     # idChild
+                ctypes.wintypes.DWORD,    # dwEventThread
+                ctypes.wintypes.DWORD,    # dwmsEventTime
+            )
+            
+            # 主窗口类名（排除，不是弹窗）
+            main_wnd_cls = WxUI41Config.WIN_CLS_NAME
+            
+            def _win_event_callback(hook, event, hwnd, idObject, idChild, thread, time_ms):
+                """同步回调：拦截微信进程的新窗口显示"""
+                if idObject != 0 or not hwnd:
+                    return
+                try:
+                    # 只处理微信进程的新窗口
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    if pid != wx_pid:
+                        return
+                    if hwnd in existing_hwnds:
+                        return
+                    
+                    cls = win32gui.GetClassName(hwnd)
+                    title = win32gui.GetWindowText(hwnd)
+                    visible = win32gui.IsWindowVisible(hwnd)
+                    
+                    all_events_log.append(f"evt=0x{event:04X} cls={cls} title={title!r} vis={visible}")
+                    
+                    # 排除主窗口
+                    if cls == main_wnd_cls:
+                        return
+                    
+                    # 发现新窗口，立即隐藏
+                    if visible:
+                        win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+                        popup_hwnd_holder[0] = hwnd
+                        wxlog.debug(f"[弹窗拦截] hwnd={hwnd}, cls={cls}, title={title!r}")
+                except:
+                    pass
+            
+            _callback = WINEVENTPROC(_win_event_callback)
+            
+            # 按PID过滤：只拦截微信进程的事件
+            # EVENT_OBJECT_SHOW(0x8002) + EVENT_SYSTEM_DIALOGSTART(0x0010)
+            hook1 = user32.SetWinEventHook(
+                0x8002, 0x8002,  # EVENT_OBJECT_SHOW
+                0, _callback, wx_pid, 0, 0
+            )
+            hook2 = user32.SetWinEventHook(
+                0x0010, 0x0010,  # EVENT_SYSTEM_DIALOGSTART
+                0, _callback, wx_pid, 0, 0
+            )
+            hook3 = user32.SetWinEventHook(
+                0x8000, 0x8000,  # EVENT_OBJECT_CREATE
+                0, _callback, wx_pid, 0, 0
+            )
+            
+            try:
+                # 点击头像
+                uia.Click(click_x, click_y)
+                
+                # 泵送消息等待事件回调触发（最长1.5s）
+                t0 = time.time()
+                while popup_hwnd_holder[0] is None and (time.time() - t0) < 1.5:
+                    msg = ctypes.wintypes.MSG()
+                    while ctypes.windll.user32.PeekMessageW(
+                        ctypes.byref(msg), 0, 0, 0, 1  # PM_REMOVE
+                    ):
+                        ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
+                        ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
+                    if popup_hwnd_holder[0] is None:
+                        time.sleep(0.002)
+                
+                # 诊断：输出所有捕获的窗口事件
+                if all_events_log:
+                    wxlog.debug(f"[弹窗诊断] 共{len(all_events_log)}个事件:")
+                    for evt_line in all_events_log[:20]:
+                        wxlog.debug(f"  {evt_line}")
+                else:
+                    wxlog.debug("[弹窗诊断] 未捕获到任何窗口事件!")
+                
+                popup_hwnd = popup_hwnd_holder[0]
+                if popup_hwnd is None:
+                    wxlog.debug("[头像弹窗] 超时未检测到弹窗")
+                    return ""
+                
+                # 弹窗已被拦截隐藏，通过 UIA 读取隐藏窗口内容
+                time.sleep(0.05)
+                ctrl = uia.ControlFromHandle(popup_hwnd)
+                nickname = ""
+                
+                # 方式1：直接查找 ContactHeadView
+                try:
+                    head_view = ctrl.ButtonControl(
+                        ClassName=WxUI41Config.CONTACT_HEAD_VIEW_CLS,
+                        AutomationId=WxUI41Config.CONTACT_HEAD_VIEW_AUTOMATION_ID
+                    )
+                    if head_view.Exists(0.5):
+                        nickname = head_view.Name if hasattr(head_view, 'Name') else ""
+                except:
+                    pass
+                
+                # 方式2：递归查找
+                if not nickname:
+                    def _find_in_popup(c, depth=0, max_depth=5):
+                        if depth > max_depth:
+                            return None
+                        try:
+                            for child in c.GetChildren():
+                                if (child.ControlTypeName == 'ButtonControl' and
+                                    getattr(child, 'ClassName', '') == WxUI41Config.CONTACT_HEAD_VIEW_CLS):
+                                    child_name = getattr(child, 'Name', '')
+                                    if child_name and child_name.strip():
+                                        return child_name.strip()
+                                result = _find_in_popup(child, depth + 1, max_depth)
+                                if result:
+                                    return result
+                        except:
+                            pass
+                        return None
+                    nickname = _find_in_popup(ctrl)
+                
+                # 关闭弹窗
+                try:
+                    uia.SendKeys('{ESC}')
+                except:
+                    pass
+                
+                wxlog.debug(f"[头像弹窗] nickname='{nickname}'")
+                return nickname.strip() if nickname else ""
+            finally:
+                try:
+                    if hook1: user32.UnhookWinEvent(hook1)
+                    if hook2: user32.UnhookWinEvent(hook2)
+                    if hook3: user32.UnhookWinEvent(hook3)
+                except:
+                    pass
+        except:
+            return ""
+
     def _extract_content(self) -> str:
         """提取消息内容，支持图片、动画表情等特殊消息类型"""
         main_name = self.control.Name or ""

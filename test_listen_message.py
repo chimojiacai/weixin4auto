@@ -32,7 +32,8 @@ def on_message(msg, chat):
     msg_type = getattr(msg, 'type', 'unknown')
     msg_attr = getattr(msg, 'attr', 'unknown')
     chat_label = "群聊" if chat.is_group else "私聊"
-    print(f"  [{sender}] [{chat_label}] [attr={msg_attr}] ({msg_type}) {msg.content}")
+    sender_info = f"发送者: {sender}" if sender != "我" else "我"
+    print(f"  [{sender_info}] [{chat_label}] [attr={msg_attr}] ({msg_type}) {msg.content}")
 
     # 图片消息自动下载
     if msg_type == 'image':
@@ -53,7 +54,7 @@ def main():
     print("消息监听测试")
     print("=" * 50)
 
-    wx = WeChat()
+    wx = WeChat(debug=True)  # 启用调试模式查看发送者检测日志
     print(f"昵称: {wx.nickname}")
 
     # 启动后台监听，block=True 阻塞主线程，Ctrl+C 退出

@@ -352,6 +352,29 @@ class WeChat(Chat, Listener):
                 if msgs:
                     wxlog.debug(f"[{who}] 获取到 {len(msgs)} 条新消息")
                     for msg in msgs:
+                        # 群聊中对方消息：sender 为空或回退为群名时，通过点击头像获取真实昵称
+                        msg_sender = getattr(msg, 'sender', None)
+                        is_group = chat.is_group
+                        is_friend = getattr(msg, 'attr', None) == 'friend'
+                        has_method = hasattr(msg, '_get_sender_from_avatar')
+                        sender_empty_or_group = not msg_sender or msg_sender == chat.who
+                        wxlog.debug(
+                            f"[sender检测] is_group={is_group}, is_friend={is_friend}, "
+                            f"has_method={has_method}, sender_empty_or_group={sender_empty_or_group}, "
+                            f"msg_sender='{msg_sender}', chat.who='{chat.who}'"
+                        )
+                        if (
+                            is_group
+                            and is_friend
+                            and has_method
+                            and sender_empty_or_group
+                        ):
+                            try:
+                                sender_name = msg._get_sender_from_avatar()
+                                if sender_name:
+                                    msg.sender = sender_name
+                            except Exception as e:
+                                wxlog.debug(f"[群聊] 获取发送者昵称失败: {e}")
                         wxlog.debug(f"  [{msg.attr}] {who} - {msg.content}")
                         self._excutor.submit(self._safe_callback, callback, msg, chat)
             except Exception as e:
