@@ -30,7 +30,9 @@ def on_message(msg, chat):
         sender = chat.who
     
     msg_type = getattr(msg, 'type', 'unknown')
-    print(f"  [{sender}] ({msg_type}) {msg.content}")
+    msg_attr = getattr(msg, 'attr', 'unknown')
+    chat_label = "群聊" if chat.is_group else "私聊"
+    print(f"  [{sender}] [{chat_label}] [attr={msg_attr}] ({msg_type}) {msg.content}")
 
     # 图片消息自动下载
     if msg_type == 'image':

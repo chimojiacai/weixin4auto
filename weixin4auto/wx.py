@@ -13,6 +13,7 @@ import time
 import sys
 import os
 from typing import (
+    Any,
     Callable,
     TYPE_CHECKING,
     Union, 
@@ -95,6 +96,10 @@ class Chat:
     def __init__(self, core: WeChatSubWnd=None):
         self._api = core
         self.who = self._api.nickname
+        # 群聊检测属性（默认值，通过 DetectGroupInfo 更新）
+        self.is_group = False
+        self.chat_type = 'unknown'
+        self.group_member_count = 0
 
     def __repr__(self):
         return f'<{PROJECT_NAME} - {self.__class__.__name__} object("{self._api.nickname}")>'
@@ -134,10 +139,45 @@ class Chat:
         # 只返回窗口标题信息
         return {
             'chat_name': self.who,
-            'chat_type': 'unknown',
+            'chat_type': self.chat_type,
+            'is_group': self.is_group,
+            'group_member_count': self.group_member_count
+        }
+
+    def DetectGroupInfo(self) -> Dict[str, Any]:
+        """通过检查窗口 AutomationId 中的 @chatroom 标识判断是否为群聊
+        
+        原理：微信群聊窗口的 AutomationId 格式为 "ChatSingleWindow{xxx}@chatroom"，
+        包含 "@chatroom" 后缀。私聊窗口没有这个后缀。
+        无需任何点击操作，直接读取窗口属性即可。
+        
+        Returns:
+            dict: 包含 chat_type, is_group, group_member_count 的字典
+        """
+        result = {
+            'chat_type': 'friend',
             'is_group': False,
             'group_member_count': 0
         }
+        try:
+            # 检查子窗口的 AutomationId 是否包含 @chatroom
+            auto_id = self._api.control.AutomationId or ''
+            if '@chatroom' in auto_id:
+                result['is_group'] = True
+                result['chat_type'] = 'group'
+                # 获取群成员数量
+                chat_api = self._api._chat_api
+                if chat_api:
+                    detail = chat_api.detect_group_info()
+                    result['group_member_count'] = detail.get('group_member_count', 0)
+            
+            self.is_group = result['is_group']
+            self.chat_type = result['chat_type']
+            self.group_member_count = result['group_member_count']
+        except Exception as e:
+            wxlog.debug(f"群聊检测失败: {e}")
+        
+        return result
 
     
     @uilock
@@ -337,6 +377,11 @@ class WeChat(Chat, Listener):
             if subwin is None:
                 return False
             new_chat = Chat(subwin)
+            # 重新检测群聊信息
+            try:
+                new_chat.DetectGroupInfo()
+            except Exception:
+                pass
             # 重新初始化消息追踪状态
             chatbox_id = new_chat._api._chat_api.id if hasattr(new_chat._api, '_chat_api') and new_chat._api._chat_api else None
             if chatbox_id:
@@ -456,6 +501,14 @@ class WeChat(Chat, Listener):
             return WxResponse.failure('找不到聊天窗口')
         name = subwin.nickname
         chat = Chat(subwin)
+        
+        # 检测是否为群聊
+        try:
+            chat.DetectGroupInfo()
+            wxlog.debug(f"[{name}] 群聊检测: is_group={chat.is_group}, member_count={chat.group_member_count}")
+        except Exception as e:
+            wxlog.debug(f"[{name}] 群聊检测失败: {e}")
+        
         chatbox_id = chat._api._chat_api.id if hasattr(chat._api, '_chat_api') and chat._api._chat_api else None
         if chatbox_id:
             from weixin4auto.ui.chatbox import USED_MSG_IDS, LAST_MSG_COUNT

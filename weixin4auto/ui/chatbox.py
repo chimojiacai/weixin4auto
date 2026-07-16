@@ -60,6 +60,39 @@ class ChatBox(BaseUISubWnd):
         self._who = self.editbox.Name
         return self._who
     
+    def detect_group_info(self) -> dict:
+        """通过检查聊天名称标签的兄弟控件获取群成员数量
+        
+        原理：群聊时，current_chat_name_label 的下一个兄弟控件文本为 "(N)" 格式，
+        其中 N 为群成员数量。
+        
+        Returns:
+            dict: 包含 is_group, group_member_count 的字典
+        """
+        result = {
+            'is_group': False,
+            'group_member_count': 0
+        }
+        
+        try:
+            chat_name_label = self.control.TextControl(
+                AutomationId='content_view.top_content_view.title_h_view.left_v_view.'
+                             'left_content_v_view.left_ui_.big_title_line_h_view.current_chat_name_label'
+            )
+            if chat_name_label.Exists(0.5):
+                next_sibling = chat_name_label.GetNextSiblingControl()
+                if next_sibling:
+                    sibling_name = (next_sibling.Name or '').strip()
+                    match = re.match(r'^\((\d+)\)$', sibling_name)
+                    if match:
+                        result['is_group'] = True
+                        result['group_member_count'] = int(match.group(1))
+        except Exception as e:
+            from weixin4auto.logger import wxlog
+            wxlog.debug(f"获取群成员数量失败: {e}")
+        
+        return result
+
     def get_info(self):
         chat_info = {}
         chat_info_control = self.control.GetParentControl().GroupControl(ClassName=WxUI41Config.CHAT_INFO_VIEW_CLS)
