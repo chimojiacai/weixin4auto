@@ -183,6 +183,31 @@ def create_app() -> Flask:
         result = mgr.get_webhooks(nickname)
         return jsonify({'success': True, 'data': result})
 
+    @app.route('/api/message/quote', methods=['POST'])
+    def quote_message():
+        """
+        引用指定消息并回复
+        Body JSON:
+            who (str):     聊天对象昵称（必填）
+            msg_id (str):  要引用的消息 ID（必填，支持 runtimeid 或 hash）
+            msg (str):     回复内容（必填）
+            exact (bool, optional): 是否精确匹配，默认 true
+        """
+        data = request.get_json(silent=True) or {}
+        who = data.get('who')
+        msg_id = data.get('msg_id')
+        msg = data.get('msg')
+        if not who or not msg_id or not msg:
+            return jsonify({'success': False, 'error': '缺少 who、msg_id 或 msg 参数'})
+
+        result = mgr.quote_msg(
+            who=who,
+            msg_id=msg_id,
+            msg=msg,
+            exact=data.get('exact', True),
+        )
+        return jsonify(result)
+
     # ── 文件下载目录 ──────────────────────────────────────────
 
     @app.route('/api/file/<path:filename>', methods=['GET'])

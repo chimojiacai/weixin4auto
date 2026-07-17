@@ -442,7 +442,7 @@ class ChatBox(BaseUISubWnd):
         if msg_id is None:
             return None
         if isinstance(msg_id, str):
-            parts = re.findall(r"\d+", msg_id)
+            parts = re.findall(r"-?\d+", msg_id)
             if not parts:
                 return None
             return tuple(int(p) for p in parts)

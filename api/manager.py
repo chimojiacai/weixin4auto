@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 import tempfile
 import threading
 from collections import defaultdict
@@ -146,8 +147,6 @@ class WeChatManager:
                     if result.is_success:
                         file_path = result['data']['path']
                         data['file_path'] = file_path
-                        # 拼接 HTTP 可访问的 URL
-                        import os
                         data['file_url'] = f'/api/file/{os.path.basename(file_path)}'
                     else:
                         data['download_error'] = result.get('message', '下载失败')
@@ -204,6 +203,58 @@ class WeChatManager:
             return {nickname: list(self._webhook_urls.get(nickname, []))}
         return {k: list(v) for k, v in self._webhook_urls.items()}
 
+    # ── 引用回复 ─────────────────────────────────────────────
+
+    def quote_msg(self, who: str, msg_id: str, msg: str, exact: bool = True) -> dict:
+        """引用指定消息并发送回复
+
+        Args:
+            who: 聊天对象昵称
+            msg_id: 消息 ID（runtimeid 字符串或 hash）
+            msg: 回复内容
+            exact: 搜索聊天对象时是否精确匹配
+
+        Returns:
+            dict: 操作结果
+        """
+        wx = self._ensure_wx()
+
+        # 优先在监听子窗口中查找
+        chat = None
+        listen_key = None
+        if hasattr(wx, 'listen'):
+            for key, (c, _) in wx.listen.items():
+                if key == who or who in key or key in who:
+                    chat = c
+                    listen_key = key
+                    break
+            # 反查原始昵称
+            if chat is None and hasattr(wx, '_listen_nicknames'):
+                for actual, orig in wx._listen_nicknames.items():
+                    if orig == who and actual in wx.listen:
+                        chat, _ = wx.listen[actual]
+                        listen_key = actual
+                        break
+
+        # 未找到监听窗口，切换到主窗口
+        if chat is None:
+            wx.ChatWith(who=who, exact=exact)
+            from weixin4auto.wx import Chat
+            chat = Chat(wx._api)
+
+        # 查找消息：优先 hash，再试 runtimeid
+        target_msg = None
+        if re.fullmatch(r'[0-9a-fA-F]{32}', msg_id):
+            target_msg = chat.GetMessageByHash(msg_id)
+        if target_msg is None:
+            target_msg = chat.GetMessageById(msg_id)
+        if target_msg is None:
+            return {'success': False, 'message': f'未找到消息: {msg_id}（消息可能已滚出可视区域）'}
+
+        # 调用消息对象的 quote 方法（已内置于 BaseMessage）
+        result = target_msg.quote(msg)
+        return {'success': result.is_success, 'message': result.get('message', '')}
+
     # ── 会话 ────────────────────────────────────────────────
 
     def switch_chat(self, who: str, exact: bool = True) -> dict:
@@ -234,6 +285,8 @@ class WeChatManager:
             'type': getattr(msg, 'type', 'unknown'),
             'attr': getattr(msg, 'attr', 'unknown'),
             'content': content,
+            'id': str(getattr(msg, 'id', '')) or None,
+            'hash': getattr(msg, 'hash', None),
             'is_self': getattr(msg, 'is_self', False),
             'is_system': getattr(msg, 'is_system', False),
             'sender': getattr(msg, 'sender', None) or chat.who,

@@ -82,7 +82,40 @@ curl -X POST http://localhost:5000/api/message/send \
 
 ---
 
-### 3. 发送文件
+### 3. 引用回复消息
+
+#### `POST /api/message/quote`
+
+引用指定消息并发送回复。
+
+**请求体：**
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| who | string | ✅ | 聊天对象昵称 |
+| msg_id | string | ✅ | 要引用的消息 ID（支持 `id` 或 `hash`，从监听消息中获取） |
+| msg | string | ✅ | 回复内容 |
+| exact | bool | | 是否精确匹配，默认 true |
+
+**示例：**
+```bash
+curl -X POST http://localhost:5000/api/message/quote \
+  -H "Content-Type: application/json" \
+  -d '{"who": "文件传输助手", "msg_id": "a1b2c3d4e5f6...", "msg": "收到，马上处理"}'
+```
+
+**响应示例：**
+```json
+{ "success": true, "message": "success" }
+```
+
+> **说明：**  
+> - `msg_id` 支持两种格式：监听消息返回的 `hash`（32位 MD5）或 `id`（runtimeid）
+> - 如果已在监听中的聊天，直接在子窗口操作；否则会自动切换主窗口
+> - 仅支持可引用的消息类型（文本、图片等，系统消息不支持）
+
+---
+
+### 4. 发送文件
 
 #### `POST /api/file/send`
 
@@ -126,7 +159,7 @@ curl -X POST http://localhost:5000/api/file/send \
 
 ---
 
-### 4. 消息监听
+### 5. 消息监听
 
 #### `POST /api/listen/start`
 
@@ -210,10 +243,12 @@ curl "http://localhost:5000/api/listen/messages?clear=false"
       "type": "text",
       "attr": "friend",
       "content": "你好",
+      "id": "(12345, 67890)",
+      "hash": "a1b2c3d4e5f6...",
       "is_self": false,
       "is_system": false,
       "sender": "文件传输助手",
-      "time": "10:30"
+      "time": "2026-07-17 10:30:22"
     }
   ]
 }
@@ -221,7 +256,7 @@ curl "http://localhost:5000/api/listen/messages?clear=false"
 
 ---
 
-### 5. Webhook 消息转发
+### 6. Webhook 消息转发
 
 监听启动时可配置 `webhook_url`，收到消息会实时 POST 到目标地址。也可以单独管理 webhook。
 
@@ -260,7 +295,37 @@ curl "http://localhost:5000/api/listen/messages?clear=false"
 
 ---
 
-### 6. 会话管理
+### 7. 文件下载目录
+
+#### `GET /api/file/<filename>`
+
+访问下载目录中的文件（图片消息自动下载后存放于此）。
+
+**示例：**
+```
+GET http://localhost:5000/api/file/wxauto_image_20260715203810487816.jpg
+```
+
+---
+
+#### `GET /api/files`
+
+列出下载目录中的所有文件。
+
+**响应示例：**
+```json
+{
+  "success": true,
+  "count": 2,
+  "files": [
+    {"name": "wxauto_image_xxx.jpg", "size": 12345, "url": "/api/file/wxauto_image_xxx.jpg"}
+  ]
+}
+```
+
+---
+
+### 8. 会话管理
 
 #### `POST /api/chat/switch`
 
@@ -291,10 +356,12 @@ curl "http://localhost:5000/api/listen/messages?clear=false"
   "type": "text",
   "attr": "friend",
   "content": "消息内容",
+  "id": "(12345, 67890)",
+  "hash": "a1b2c3d4e5f6...",
   "is_self": false,
   "is_system": false,
   "sender": "发送者昵称",
-  "time": "10:30"
+  "time": "2026-07-17 10:30:22"
 }
 ```
 
@@ -305,6 +372,8 @@ curl "http://localhost:5000/api/listen/messages?clear=false"
 | type | 消息类型：text / image / voice / card 等 |
 | attr | 消息属性：self / friend / system |
 | content | 消息内容（字符串） |
+| id | 消息 runtimeid（可用于引用回复） |
+| hash | 消息 MD5 哈希（可用于引用回复） |
 | is_self | 是否自己发送 |
 | is_system | 是否系统消息（时间分割线等） |
 | sender | 发送者昵称 |

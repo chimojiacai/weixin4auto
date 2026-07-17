@@ -16,6 +16,7 @@ from typing import (
     Tuple
 )
 from hashlib import md5
+import time
 
 if TYPE_CHECKING:
     from weixin4auto.ui.chatbox import ChatBox
@@ -439,6 +440,52 @@ class BaseMessage(Message, ABC):
         if self.control.Exists(0) and self.control.BoundingRectangle.height() > 0:
             return True
         return False
+
+    def quote(self, text: str, at=None, timeout: int = 3) -> WxResponse:
+        """引用该消息并发送回复
+
+        通过右键菜单选择"引用"，然后输入文本并发送。
+        适用于所有非系统消息类型。
+
+        Args:
+            text: 回复内容
+            at: @用户列表（可选）
+            timeout: 等待菜单出现的超时时间（秒）
+
+        Returns:
+            WxResponse: 操作结果
+        """
+        if self.attr == 'system':
+            return WxResponse.failure('系统消息不支持引用')
+        if not self.exists():
+            return WxResponse.failure('消息控件已失效')
+
+        # 1. 滚动到可见
+        self.roll_into_view()
+
+        # 2. 右键点击（根据消息方向决定坐标）
+        x_bias = WxParam.DEFAULT_MESSAGE_XBIAS * 2
+        if self.attr == 'self':
+            self.control.RightClick(x=-x_bias, y=WxParam.DEFAULT_MESSAGE_YBIAS, ratioX=1, ratioY=0)
+        else:
+            self.control.RightClick(x=x_bias, y=WxParam.DEFAULT_MESSAGE_YBIAS, ratioX=0, ratioY=0)
+
+        # 3. 从右键菜单选择"引用"
+        time.sleep(0.3)
+        menu = Menu(self, timeout=timeout)
+        if not menu:
+            return WxResponse.failure('右键菜单未出现')
+        result = menu.select('引用')
+        if not result.is_success:
+            return WxResponse.failure(f'无法选择引用: {result.get("message", "")}')
+
+        # 4. @某人（可选）
+        if at:
+            self.parent.input_at(at)
+
+        # 5. 发送文本
+        time.sleep(0.3)
+        return self.parent.send_text(text)
     
     def get_info(self) -> Dict[str, Any]:
         """获取消息的详细信息，包括消息ID、内容、发送者、聊天信息等
@@ -671,29 +718,3 @@ class HumanMessage(BaseMessage, ABC):
         
         select_wnd = SelectContactWnd(self)
         return select_wnd.send(targets, interval=interval)
-    
-    @uilock
-    def quote(
-            self, text: str, 
-            at: Union[List[str], str] = None, 
-            timeout: int = 3
-        ) -> WxResponse:
-        """引用消息
-        
-        Args:
-            text (str): 引用内容
-            at (List[str], optional): @用户列表
-            timeout (int, optional): 超时时间，单位为秒，若为None则不启用超时设置
-
-        Returns:
-            WxResponse: 调用结果
-        """
-        if not self.exists():
-            return WxResponse.failure('消息对象已失效')
-        if not self.select_option('引用', timeout=timeout):
-            return WxResponse.failure('当前消息无法引用')
-        
-        if at:
-            self.parent.input_at(at)
-
-        return self.parent.send_text(text)
