@@ -294,10 +294,12 @@ class BaseMessage(Message, ABC):
                     if cls == main_wnd_cls:
                         return
                     
-                    # 发现新窗口，立即隐藏
-                    if win32gui.IsWindowVisible(hwnd):
-                        win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
-                        popup_hwnd_holder[0] = hwnd
+                    # 发现新窗口，无条件隐藏并记录
+                    # 不能用 IsWindowVisible 判断：EVENT_OBJECT_CREATE 触发时窗口尚不可见，
+                    # 会导致漏拦截；而后续 EVENT_OBJECT_SHOW 又因 hwnd 已在 existing_hwnds 中被跳过
+                    win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+                    popup_hwnd_holder[0] = hwnd
+                    wxlog.debug(f"[hook] 拦截弹窗: hwnd={hwnd}, cls={cls}")
                 except:
                     pass
             

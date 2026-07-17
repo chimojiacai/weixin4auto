@@ -100,6 +100,8 @@ class Chat:
         self.is_group = False
         self.chat_type = 'unknown'
         self.group_member_count = 0
+        # 是否需要将窗口唤起至前台以获取发送者昵称
+        self.fetch_sender = True
 
     def __repr__(self):
         return f'<{PROJECT_NAME} - {self.__class__.__name__} object("{self._api.nickname}")>'
@@ -352,22 +354,31 @@ class WeChat(Chat, Listener):
                 if msgs:
                     wxlog.debug(f"[{who}] 获取到 {len(msgs)} 条新消息")
                     for msg in msgs:
-                        # 群聊中对方消息：sender 为空或回退为群名时，通过点击头像获取真实昵称
+                        # 群聊中对方消息：fetch_sender=True 时，唤起窗口并通过点击头像获取真实昵称
                         msg_sender = getattr(msg, 'sender', None)
                         is_group = chat.is_group
                         is_friend = getattr(msg, 'attr', None) == 'friend'
                         sender_match = not msg_sender or msg_sender == chat.who
-                        wxlog.debug(
-                            f"[sender] is_group={is_group}, is_friend={is_friend}, "
-                            f"sender_match={sender_match}, sender='{msg_sender}', who='{chat.who}'"
-                        )
-                        if (
+                        should_fetch = (
                             is_group
                             and is_friend
+                            and chat.fetch_sender
                             and hasattr(msg, '_get_sender_from_avatar')
                             and sender_match
-                        ):
+                        )
+                        wxlog.debug(
+                            f"[sender] is_group={is_group}, is_friend={is_friend}, "
+                            f"fetch_sender={chat.fetch_sender}, sender_match={sender_match}, "
+                            f"should_fetch={should_fetch}, sender='{msg_sender}', who='{chat.who}'"
+                        )
+                        if should_fetch:
                             try:
+                                # 唤起聊天窗口至前台，确保头像点击可定位
+                                import win32gui
+                                import win32con
+                                top_hwnd = chat._api.control.GetTopLevelControl().NativeWindowHandle
+                                win32gui.ShowWindow(top_hwnd, win32con.SW_SHOWNOACTIVATE)
+                                win32gui.SetForegroundWindow(top_hwnd)
                                 sender_name = msg._get_sender_from_avatar()
                                 wxlog.debug(f"[sender] avatar结果: '{sender_name}'")
                                 if sender_name:
@@ -398,6 +409,8 @@ class WeChat(Chat, Listener):
             if subwin is None:
                 return False
             new_chat = Chat(subwin)
+            # 继承原 chat 的 fetch_sender 设置
+            new_chat.fetch_sender = old_chat.fetch_sender
             # 重新检测群聊信息
             try:
                 new_chat.DetectGroupInfo()
@@ -505,12 +518,14 @@ class WeChat(Chat, Listener):
             self,
             nickname: str,
             callback: Callable[['Message', Chat], None],
+            fetch_sender: bool = True,
         ) -> WxResponse:
         """添加监听聊天，将聊天窗口独立出去形成Chat对象子窗口，用于监听
         
         Args:
             nickname (str): 要监听的聊天对象
             callback (Callable[['Message', Chat], None]): 回调函数，参数为(Message对象, Chat对象)，返回值为None
+            fetch_sender (bool): 群聊中是否唤起窗口并点击头像获取发送者昵称，默认True
         """
         if not hasattr(self, '_listener_is_listening') or not self._listener_is_listening:
             self._listener_start()
@@ -522,6 +537,7 @@ class WeChat(Chat, Listener):
             return WxResponse.failure('找不到聊天窗口')
         name = subwin.nickname
         chat = Chat(subwin)
+        chat.fetch_sender = fetch_sender
         
         # 检测是否为群聊
         try:
@@ -604,6 +620,7 @@ class WeChat(Chat, Listener):
             callback: Callable[['Message', Chat], None] = None,
             auto_reply: str = None,
             block: bool = False,
+            fetch_sender: bool = True,
         ) -> None:
         """高层监听接口：一键启动对一个或多个聊天的监听
         
@@ -616,6 +633,7 @@ class WeChat(Chat, Listener):
             auto_reply: 自动回复模板，{msg} 会被替换为收到的消息内容
                         例如: "收到：{msg}"  如果设置此项且未指定 callback，会自动生成回调
             block: 是否阻塞当前线程（True 时按 Ctrl+C 退出）
+            fetch_sender: 群聊中是否唤起窗口并点击头像获取发送者昵称，默认True
         
         Examples:
             # 最简单用法：监听并缓存消息
@@ -674,7 +692,7 @@ class WeChat(Chat, Listener):
         
         # 逐个添加监听
         for nick in nicknames:
-            result = self.AddListenChat(nick, callback)
+            result = self.AddListenChat(nick, callback, fetch_sender=fetch_sender)
             if isinstance(result, WxResponse) and not result.is_success:
                 wxlog.debug(f"添加监听失败: {nick} - {result.get('message', '')}")
         
