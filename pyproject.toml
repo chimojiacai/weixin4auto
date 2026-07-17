@@ -19,6 +19,9 @@ dependencies = [
     "requests"
 ]
 
+[project.optional-dependencies]
+build = ["pyinstaller"]
+
 [project.scripts]
 weixin4auto = "weixin4auto.__main__:main"
 wxapi = "api.__main__:main"

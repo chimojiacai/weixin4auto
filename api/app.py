@@ -83,14 +83,14 @@ def create_app() -> Flask:
         """
         启动对指定聊天的监听
         Body JSON:
-            nickname (str|list):   要监听的聊天对象（必填）
+            who (str|list):   要监听的聊天对象（必填）
             webhook_url (str, optional): 消息转发地址
             fetch_sender (bool, optional): 群聊是否获取发送者昵称，默认 true
         """
         data = request.get_json(silent=True) or {}
-        nickname = data.get('nickname')
+        nickname = data.get('who')
         if not nickname:
-            return jsonify({'success': False, 'error': '缺少 nickname 参数'})
+            return jsonify({'success': False, 'error': '缺少 who 参数'})
 
         webhook_url = data.get('webhook_url')
         fetch_sender = data.get('fetch_sender', True)
@@ -111,11 +111,11 @@ def create_app() -> Flask:
         """
         停止监听
         Body JSON:
-            nickname (str, optional): 指定停止的昵称，不传则停止全部
+            who (str, optional): 指定停止的昵称，不传则停止全部
             close_window (bool, optional): 是否关闭窗口，默认 true
         """
         data = request.get_json(silent=True) or {}
-        nickname = data.get('nickname')
+        nickname = data.get('who')
         close_window = data.get('close_window', True)
 
         if nickname:

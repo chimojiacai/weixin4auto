@@ -135,7 +135,7 @@ curl -X POST http://localhost:5000/api/file/send \
 **请求体：**
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| nickname | string / list | ✅ | 监听对象，支持单个或批量 |
+| who | string / list | ✅ | 监听对象，支持单个或批量 |
 | webhook_url | string | | 消息实时转发地址 |
 | fetch_sender | bool | | 群聊是否获取发送者昵称，默认 true |
 
@@ -144,12 +144,12 @@ curl -X POST http://localhost:5000/api/file/send \
 # 监听单个聊天
 curl -X POST http://localhost:5000/api/listen/start \
   -H "Content-Type: application/json" \
-  -d '{"nickname": "文件传输助手", "webhook_url": "http://your-server/webhook"}'
+  -d '{"who": "文件传输助手", "webhook_url": "http://your-server/webhook"}'
 
 # 批量监听
 curl -X POST http://localhost:5000/api/listen/start \
   -H "Content-Type: application/json" \
-  -d '{"nickname": ["张三", "李四"]}'
+  -d '{"who": ["张三", "李四"]}'
 ```
 
 ---
@@ -169,7 +169,7 @@ curl -X POST http://localhost:5000/api/listen/start \
 # 停止指定监听
 curl -X POST http://localhost:5000/api/listen/stop \
   -H "Content-Type: application/json" \
-  -d '{"nickname": "文件传输助手"}'
+  -d '{"who": "文件传输助手"}'
 
 # 停止全部
 curl -X POST http://localhost:5000/api/listen/stop \
@@ -322,4 +322,48 @@ api/
 ├── config.py        # 配置（支持环境变量覆盖）
 └── manager.py       # WeChat 实例管理器（单例）
 run_api.py           # 启动脚本（支持命令行参数）
+wxapi.spec           # PyInstaller 打包配置
+build_exe.py         # 打包辅助脚本
 ```
+
+---
+
+## 打包为 exe
+
+### 安装 PyInstaller
+
+```bash
+pip install pyinstaller
+```
+
+### 打包
+
+```bash
+# 目录模式（推荐，启动更快）
+python build_exe.py
+
+# 单文件模式（输出单个 wxapi.exe）
+python build_exe.py --onefile
+
+# 清理旧产物后打包
+python build_exe.py --clean
+```
+
+### 输出
+
+| 模式 | 输出路径 | 运行方式 |
+|------|----------|----------|
+| 目录模式 | `dist/wxapi/wxapi.exe` | `dist\wxapi\wxapi.exe` |
+| 单文件模式 | `dist/wxapi.exe` | `dist\wxapi.exe` |
+
+### 运行
+
+```bash
+# 默认启动（0.0.0.0:5000）
+dist\wxapi\wxapi.exe
+
+# 支持环境变量
+WXAPI_PORT=8080 dist\wxapi\wxapi.exe
+```
+
+> **注意：** 打包后的 exe 必须在安装了微信客户端的 Windows 机器上运行，启动前会自动检测微信是否已登录。

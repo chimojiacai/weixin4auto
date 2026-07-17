@@ -610,18 +610,44 @@ class WeChat(Chat, Listener):
         """移除监听聊天
 
         Args:
-            nickname (str): 要移除的监听聊天对象
+            nickname (str): 要移除的监听聊天对象（支持原始昵称或窗口实际名称）
             close_window (bool, optional): 是否关闭聊天窗口. Defaults to True.
 
         Returns:
             WxResponse: 执行结果
         """
-        if nickname not in self.listen:
+        listen_key = None
+        if nickname in self.listen:
+            listen_key = nickname
+        else:
+            # 通过原始昵称反查窗口实际名称
+            for actual_name, orig_nick in self._listen_nicknames.items():
+                if orig_nick == nickname and actual_name in self.listen:
+                    listen_key = actual_name
+                    break
+            # 兼容模糊匹配（输入是子串或反之）
+            if listen_key is None:
+                for actual_name in self.listen:
+                    if nickname in actual_name or actual_name in nickname:
+                        listen_key = actual_name
+                        break
+        if listen_key is None:
             return WxResponse.failure('未找到监听对象')
-        chat, _ = self.listen[nickname]
+        chat, _ = self.listen[listen_key]
         if close_window:
-            chat.Close()
-        del self.listen[nickname]
+            # 直接用 win32 关闭窗口，避免 chat.Close() 再次获取 @uilock 导致死锁
+            try:
+                import win32gui
+                import win32con
+                hwnd = chat._api.control.GetTopLevelControl().NativeWindowHandle
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            except Exception:
+                try:
+                    chat.Close()
+                except Exception:
+                    pass
+        del self.listen[listen_key]
+        self._listen_nicknames.pop(listen_key, None)
         return WxResponse.success()
 
     def ListenChats(
