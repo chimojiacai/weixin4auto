@@ -4,3 +4,4 @@ __pycache__
 build/
 dist/
 *.spec.bak
+weixin4auto文件下载
