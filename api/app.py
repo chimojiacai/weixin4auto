@@ -1,6 +1,7 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 
 from .manager import WeChatManager
+from .config import ApiConfig
 
 
 def create_app() -> Flask:
@@ -181,6 +182,34 @@ def create_app() -> Flask:
         nickname = request.args.get('nickname')
         result = mgr.get_webhooks(nickname)
         return jsonify({'success': True, 'data': result})
+
+    # ── 文件下载目录 ──────────────────────────────────────────
+
+    @app.route('/api/file/<path:filename>', methods=['GET'])
+    def get_file(filename):
+        """通过文件名访问下载目录中的文件
+
+        示例：GET /api/file/wxauto_image_20260715203810487816.jpg
+        """
+        return send_from_directory(ApiConfig.DOWNLOAD_DIR, filename)
+
+    @app.route('/api/files', methods=['GET'])
+    def list_files():
+        """列出下载目录中的所有文件"""
+        import os
+        try:
+            files = []
+            for f in os.listdir(ApiConfig.DOWNLOAD_DIR):
+                full_path = os.path.join(ApiConfig.DOWNLOAD_DIR, f)
+                if os.path.isfile(full_path):
+                    files.append({
+                        'name': f,
+                        'size': os.path.getsize(full_path),
+                        'url': f'/api/file/{f}',
+                    })
+            return jsonify({'success': True, 'count': len(files), 'files': files})
+        except FileNotFoundError:
+            return jsonify({'success': True, 'count': 0, 'files': []})
 
     # ── 会话 ─────────────────────────────────────────────────
 

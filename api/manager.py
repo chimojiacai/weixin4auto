@@ -138,6 +138,20 @@ class WeChatManager:
 
         def _on_message(msg, chat):
             data = self._format_message(msg, chat)
+            # 图片消息自动下载
+            if getattr(msg, 'type', None) == 'image':
+                try:
+                    result = msg.download()
+                    if result.is_success:
+                        file_path = result['data']['path']
+                        data['file_path'] = file_path
+                        # 拼接 HTTP 可访问的 URL
+                        import os
+                        data['file_url'] = f'/api/file/{os.path.basename(file_path)}'
+                    else:
+                        data['download_error'] = result.get('message', '下载失败')
+                except Exception as e:
+                    data['download_error'] = str(e)
             self._buffer_message(chat.who, data)
             self._forward_to_webhooks(chat.who, data)
 
