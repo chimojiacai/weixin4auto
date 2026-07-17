@@ -61,6 +61,26 @@ class VoiceMessage(BaseMessage):
         ):
         super().__init__(control, parent, additonal_attr)
 
+    def to_text(self) -> str:
+        """获取语音转文字内容（需已开启自动转文字功能）
+        
+        等待 1 秒让微信完成转写，然后重新读取控件 Name 提取转写文本。
+        Name 格式: 语音{N}"秒{转写文本}，如 `语音2"秒你好啊`
+        
+        Returns:
+            str: 转写后的文字，未识别到则返回原始 content
+        """
+        time.sleep(2)
+        # 重新读取控件 Name，转写可能尚未完成
+        try:
+            name = self.control.Name or ''
+        except Exception:
+            name = self.content or ''
+        m = re.match(r'语音\d+"秒(.*)', name)
+        if m:
+            return m.group(1).strip()
+        return self.content or ''
+
 class ImageMessage(BaseMessage):
     type = 'image'
     

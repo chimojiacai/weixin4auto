@@ -218,12 +218,21 @@ class WeChatManager:
     # ── 内部方法 ────────────────────────────────────────────
 
     def _format_message(self, msg, chat) -> dict:
+        content = str(getattr(msg, 'content', ''))
+        # 语音消息：等待转写完成后获取文字
+        if getattr(msg, 'type', None) == 'voice':
+            try:
+                text = msg.to_text()
+                if text:
+                   content = text
+            except Exception:
+                pass
         data = {
             'chat': chat.who,
             'is_group': getattr(chat, 'is_group', False),
             'type': getattr(msg, 'type', 'unknown'),
             'attr': getattr(msg, 'attr', 'unknown'),
-            'content': str(getattr(msg, 'content', '')),
+            'content': content,
             'is_self': getattr(msg, 'is_self', False),
             'is_system': getattr(msg, 'is_system', False),
             'sender': getattr(msg, 'sender', None) or chat.who,
