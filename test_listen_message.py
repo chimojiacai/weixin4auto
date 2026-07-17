@@ -16,6 +16,29 @@ from weixin4auto import WeChat
 
 def on_message(msg, chat):
     """收到消息的回调"""
+    # 打印 msg 的所有参数（含类属性、@property）
+    print("\n" + "=" * 60, flush=True)
+    print(f"msg 所有参数 (类型: {msg.__class__.__name__}):", flush=True)
+    skip_keys = {'control', 'parent', 'root'}
+    for key in sorted(dir(msg)):
+        if key.startswith('_') or key in skip_keys:
+            continue
+        try:
+            value = getattr(msg, key)
+            # 跳过方法/函数
+            if callable(value):
+                continue
+            try:
+                val_str = repr(value)
+                if len(val_str) > 200:
+                    val_str = val_str[:200] + '...'
+            except Exception as e:
+                val_str = f'<repr error: {e}>'
+            print(f"  {key} = {val_str}", flush=True)
+        except Exception as e:
+            print(f"  {key} = <access error: {e}>", flush=True)
+    print("=" * 60 + "\n", flush=True)
+
     # 过滤系统消息（时间分割线等）
     if msg.is_system:
         print(f"  [系统] {msg.content}")
@@ -65,7 +88,7 @@ def main():
         callback=on_message,
         auto_reply=args.auto_reply,
         block=True,
-        fetch_sender=False,
+        # fetch_sender=False,
     )
     print("已退出")
 

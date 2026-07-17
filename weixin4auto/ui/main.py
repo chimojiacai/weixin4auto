@@ -296,54 +296,60 @@ class WeChatMainWnd(WeChatSubWnd):
             nickname: str=None, 
             exact: bool=False
         ) -> ChatBox:
-        if nickname and (chatbox := WeChatSubWnd(nickname, self, timeout=0)).control:
-            return chatbox._chat_api
-        else:
-            if nickname:
-                def extract_name(full_name: str) -> str:
-                    """提取名称的第一部分（第一个空格之前）"""
-                    if not full_name:
-                        return ""
-                    first_space_idx = full_name.find(' ')
-                    return full_name[:first_space_idx].strip() if first_space_idx > 0 else full_name.strip()
-                
-                # 检查当前窗口是否已是目标窗口（避免二次点击导致焦点失去）
+        if nickname:
+            # 1. 精确匹配已独立的子窗口（直接FindWindow，可靠快速）
+            try:
+                existing = WeChatSubWnd(nickname, self, timeout=0)
+                if existing.control is not None:
+                    return existing._chat_api
+            except Exception:
+                pass
+            
+            # 2. 均未命中，回退到原有逻辑
+            def extract_name(full_name: str) -> str:
+                """提取名称的第一部分（第一个空格之前）"""
+                if not full_name:
+                    return ""
+                first_space_idx = full_name.find(' ')
+                return full_name[:first_space_idx].strip() if first_space_idx > 0 else full_name.strip()
+            
+            # 检查当前窗口是否已是目标窗口（避免二次点击导致焦点失去）
+            try:
+                if self._chat_api.msgbox.Exists(0):
+                    current_extracted = extract_name(self._chat_api.who)
+                    clean_keywords = nickname.split('?')[0].split('，')[0].split(',')[0].strip()
+                    
+                    if exact:
+                        if current_extracted == clean_keywords or current_extracted == nickname:
+                            return self._chat_api
+                    else:
+                        if clean_keywords in current_extracted or nickname in current_extracted:
+                            return self._chat_api
+            except:
+                pass
+            
+            # 在当前可见会话列表中查找
+            session = self._session_api.find_session_in_current_view(keywords=nickname, exact=exact)
+            if session:
                 try:
-                    if self._chat_api.msgbox.Exists(0):
-                        current_extracted = extract_name(self._chat_api.who)
-                        clean_keywords = nickname.split('?')[0].split('，')[0].split(',')[0].strip()
-                        
-                        if exact:
-                            if current_extracted == clean_keywords or current_extracted == nickname:
-                                return self._chat_api
-                        else:
-                            if clean_keywords in current_extracted or nickname in current_extracted:
-                                return self._chat_api
+                    session.click()
+                    time.sleep(0.2)
+                    self._refresh_chatbox_control()
+                    if self._chat_api.msgbox.Exists(0.5):
+                        return self._chat_api
                 except:
                     pass
-                
-                # 在当前可见会话列表中查找
-                session = self._session_api.find_session_in_current_view(keywords=nickname, exact=exact)
-                if session:
-                    try:
-                        session.click()
-                        time.sleep(0.2)
-                        self._refresh_chatbox_control()
-                        if self._chat_api.msgbox.Exists(0.5):
-                            return self._chat_api
-                    except:
-                        pass
-                
-                # 使用搜索功能
-                switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
-                if not switch_result:
-                    return None
-                
-                # 搜索切换后，重新查找聊天控件（新版微信控件树可能变化）
-                self._refresh_chatbox_control()
-                if self._chat_api.msgbox.Exists(0.5):
-                    return self._chat_api
+            
+            # 使用搜索功能
+            switch_result = self._session_api.switch_chat(keywords=nickname, exact=exact)
+            if not switch_result:
                 return None
+            
+            # 搜索切换后，重新查找聊天控件（新版微信控件树可能变化）
+            self._refresh_chatbox_control()
+            if self._chat_api.msgbox.Exists(0.5):
+                return self._chat_api
+            return None
 
     def switch_chat(
             self, 
@@ -391,9 +397,13 @@ class WeChatMainWnd(WeChatSubWnd):
             
     def open_separate_window(self, keywords: str) -> WeChatSubWnd:
         """打开独立窗口，如果已存在则直接返回，避免重复搜索和拖出"""
-        subwin = self.get_sub_wnd(keywords)
-        if subwin:
-            return subwin
+        # 直接用FindWindow查找已独立的子窗口
+        try:
+            existing = WeChatSubWnd(keywords, self, timeout=0)
+            if existing.control is not None:
+                return existing
+        except Exception:
+            pass
         
         if result := self._session_api.open_separate_window(keywords):
             find_nickname = result['data'].get('nickname', keywords)

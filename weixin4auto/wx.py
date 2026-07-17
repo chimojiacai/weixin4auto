@@ -532,7 +532,17 @@ class WeChat(Chat, Listener):
         if nickname in self.listen:
             return self.listen[nickname][0]
         
-        subwin = self._api.open_separate_window(nickname)
+        # 先检查是否已有该昵称的独立子窗口，避免重复搜索和拖出
+        try:
+            existing = WeChatSubWnd(nickname, self._api, timeout=0)
+            if existing.control is not None:
+                subwin = existing
+            else:
+                subwin = None
+        except Exception:
+            subwin = None
+        if subwin is None:
+            subwin = self._api.open_separate_window(nickname)
         if subwin is None:
             return WxResponse.failure('找不到聊天窗口')
         name = subwin.nickname
