@@ -45,19 +45,33 @@ def create_app() -> Flask:
         """
         发送文件
         Body JSON:
-            who (str):       发送对象昵称（必填）
-            filepath (str|list): 文件路径或路径列表（必填）
+            who (str):            发送对象昵称（必填）
+            filepath (str|list):   文件路径或路径列表
+            file_base64 (str):     文件 base64 编码内容，需配合 filename
+            filename (str):        base64 模式的文件名（含扩展名）
+            file_url (str):        文件下载地址
             exact (bool, optional): 是否精确匹配，默认 false
+
+        注意：filepath / file_base64 / file_url 三选一
+              base64 和 url 模式会先存临时文件，发送成功后自动删除
         """
         data = request.get_json(silent=True) or {}
         who = data.get('who')
+        if not who:
+            return jsonify({'success': False, 'error': '缺少 who 参数'})
+
         filepath = data.get('filepath')
-        if not who or not filepath:
-            return jsonify({'success': False, 'error': '缺少 who 或 filepath 参数'})
+        file_base64 = data.get('file_base64')
+        file_url = data.get('file_url')
+        if not filepath and not file_base64 and not file_url:
+            return jsonify({'success': False, 'error': '缺少文件来源参数（filepath / file_base64 / file_url）'})
 
         result = mgr.send_files(
             who=who,
             filepath=filepath,
+            file_base64=file_base64,
+            filename=data.get('filename'),
+            file_url=file_url,
             exact=data.get('exact', False),
         )
         return jsonify(result)

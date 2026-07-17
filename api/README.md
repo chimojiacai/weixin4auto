@@ -82,27 +82,51 @@ curl -X POST http://localhost:5000/api/message/send \
 
 ---
 
+### 3. 发送文件
+
 #### `POST /api/file/send`
 
-发送文件或图片。
+发送文件或图片，支持三种文件来源（三选一）。
 
 **请求体：**
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | who | string | ✅ | 发送对象昵称 |
-| filepath | string / list | ✅ | 文件绝对路径或路径列表 |
+| filepath | string / list | | 文件绝对路径或路径列表 |
+| file_base64 | string | | 文件 base64 编码内容，需配合 `filename` |
+| filename | string | | base64 模式的文件名（含扩展名） |
+| file_url | string | | 文件下载地址 |
 | exact | bool | | 是否精确匹配，默认 false |
+
+> **注意：** `filepath` / `file_base64` / `file_url` 三选一。  
+> `base64` 和 `url` 模式会先存为临时文件，发送成功后自动删除。
 
 **示例：**
 ```bash
+# 方式1：直接文件路径
 curl -X POST http://localhost:5000/api/file/send \
   -H "Content-Type: application/json" \
   -d '{"who": "文件传输助手", "filepath": "C:/image.png"}'
+
+# 方式2：base64 编码
+curl -X POST http://localhost:5000/api/file/send \
+  -H "Content-Type: application/json" \
+  -d '{"who": "文件传输助手", "file_base64": "iVBORw0KGgo...", "filename": "photo.png"}'
+
+# 方式3：URL 下载
+curl -X POST http://localhost:5000/api/file/send \
+  -H "Content-Type: application/json" \
+  -d '{"who": "文件传输助手", "file_url": "https://example.com/image.png"}'
+
+# 发送多个文件
+curl -X POST http://localhost:5000/api/file/send \
+  -H "Content-Type: application/json" \
+  -d '{"who": "文件传输助手", "filepath": ["C:/a.png", "C:/b.pdf"]}'
 ```
 
 ---
 
-### 3. 消息监听
+### 4. 消息监听
 
 #### `POST /api/listen/start`
 
@@ -197,7 +221,7 @@ curl "http://localhost:5000/api/listen/messages?clear=false"
 
 ---
 
-### 4. Webhook 消息转发
+### 5. Webhook 消息转发
 
 监听启动时可配置 `webhook_url`，收到消息会实时 POST 到目标地址。也可以单独管理 webhook。
 
@@ -236,7 +260,7 @@ curl "http://localhost:5000/api/listen/messages?clear=false"
 
 ---
 
-### 5. 会话管理
+### 6. 会话管理
 
 #### `POST /api/chat/switch`
 

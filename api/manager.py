@@ -1,6 +1,10 @@
+import base64
+import os
+import tempfile
 import threading
 from collections import defaultdict
 from typing import Dict, List, Optional
+from urllib.parse import urlparse, unquote
 
 import requests
 
@@ -52,10 +56,70 @@ class WeChatManager:
         result = wx.SendMsg(msg=msg, who=who, at=at, exact=exact)
         return {'success': result.is_success, 'message': result.get('message', '')}
 
-    def send_files(self, who: str, filepath, exact: bool = False) -> dict:
+    def send_files(
+        self,
+        who: str,
+        filepath=None,
+        file_base64: str = None,
+        filename: str = None,
+        file_url: str = None,
+        exact: bool = False,
+    ) -> dict:
         wx = self._ensure_wx()
-        result = wx.SendFiles(filepath=filepath, who=who, exact=exact)
-        return {'success': result.is_success, 'message': result.get('message', '')}
+        temp_files = []
+
+        try:
+            # 模式1：base64 内容
+            if file_base64:
+                if not filename:
+                    return {'success': False, 'message': 'base64 模式需要提供 filename 参数'}
+                path = self._save_base64(file_base64, filename)
+                temp_files.append(path)
+                filepath = path
+
+            # 模式2：URL 下载
+            elif file_url:
+                path = self._download_file(file_url)
+                temp_files.append(path)
+                filepath = path
+
+            if not filepath:
+                return {'success': False, 'message': '缺少文件来源参数（filepath / file_base64 / file_url）'}
+
+            result = wx.SendFiles(filepath=filepath, who=who, exact=exact)
+            return {'success': result.is_success, 'message': result.get('message', '')}
+        finally:
+            for f in temp_files:
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+
+    def _save_base64(self, data: str, filename: str) -> str:
+        """将 base64 内容解码并保存为临时文件，返回文件路径"""
+        raw = base64.b64decode(data)
+        suffix = os.path.splitext(filename)[1] or '.tmp'
+        fd, path = tempfile.mkstemp(suffix=suffix, prefix='wxapi_')
+        with os.fdopen(fd, 'wb') as f:
+            f.write(raw)
+        return path
+
+    def _download_file(self, url: str) -> str:
+        """从 URL 下载文件保存为临时文件，返回文件路径"""
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
+        # 从 URL 或 Content-Disposition 提取文件名
+        name = ''
+        cd = resp.headers.get('Content-Disposition', '')
+        if 'filename=' in cd:
+            name = unquote(cd.split('filename=')[-1].strip('"\' '))
+        if not name:
+            name = unquote(urlparse(url).path.split('/')[-1]) or 'file.tmp'
+        suffix = os.path.splitext(name)[1] or '.tmp'
+        fd, path = tempfile.mkstemp(suffix=suffix, prefix='wxapi_')
+        with os.fdopen(fd, 'wb') as f:
+            f.write(resp.content)
+        return path
 
     # ── 监听 ────────────────────────────────────────────────
 
