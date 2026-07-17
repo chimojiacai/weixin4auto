@@ -55,10 +55,12 @@ class ChatBox(BaseUISubWnd):
     
     @property
     def who(self):
-        if hasattr(self, '_who'):
-            return self._who
-        self._who = self.editbox.Name
-        return self._who
+        # 始终从 editbox 读取最新名称，避免切换聊天后返回旧值
+        try:
+            self._who = self.editbox.Name
+        except Exception:
+            pass
+        return getattr(self, '_who', '')
     
     def detect_group_info(self) -> dict:
         """通过检查聊天名称标签的兄弟控件获取群成员数量
