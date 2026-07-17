@@ -215,15 +215,23 @@ class SessionBox:
     def _close_search(self):
         """关闭搜索面板并清空搜索框"""
         try:
-            # 按 Escape 关闭搜索面板
-            self.control.SendKeys('{Escape}')
+            # 先点击搜索框确保焦点在搜索区域，避免 Escape 误传到主窗口
+            if self.searchbox.Exists(0):
+                self.searchbox.Click()
+                time.sleep(0.05)
+                self.searchbox.SendKeys('{Escape}')
+            else:
+                self.control.SendKeys('{Escape}')
             time.sleep(0.1)
         except:
             pass
         try:
-            # 如果搜索面板还在，点击空白区域关闭
+            # 如果搜索面板还在，点击搜索框区域关闭
             if self.search_content.Exists(0):
-                self.control.MiddleClick()
+                if self.searchbox.Exists(0):
+                    self.searchbox.Click()
+                    time.sleep(0.05)
+                    self.searchbox.SendKeys('{Escape}')
                 time.sleep(0.1)
         except:
             pass

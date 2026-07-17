@@ -14,11 +14,14 @@ dependencies = [
     "pillow",
     "psutil",
     "colorama",
-    "comtypes"
+    "comtypes",
+    "flask",
+    "requests"
 ]
 
 [project.scripts]
 weixin4auto = "weixin4auto.__main__:main"
+wxapi = "api.__main__:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
