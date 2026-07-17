@@ -477,6 +477,7 @@ class BaseMessage(Message, ABC):
             return WxResponse.failure('右键菜单未出现')
         result = menu.select('引用')
         if not result.is_success:
+            # Menu._safe_close() 已安全关闭菜单，无需额外操作
             return WxResponse.failure(f'无法选择引用: {result.get("message", "")}')
 
         # 4. @某人（可选）

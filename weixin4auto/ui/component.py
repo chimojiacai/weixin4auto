@@ -93,9 +93,24 @@ class Menu(BaseUISubWnd):
             if c.Name == item:
                 c.Click()
                 return WxResponse.success()
-        if self.exists(0):
-            self.close()
+        # 找不到选项时，只对菜单控件发一次 Esc（不继承 BaseUIWnd.close 的两次 Esc）
+        self._safe_close()
         return WxResponse.failure(f'未找到选项：{item}')
+
+    def _safe_close(self):
+        """安全关闭菜单：只对菜单控件发一次 Esc，避免影响父窗口"""
+        try:
+            if self.exists(0):
+                self.control.SendKeys('{Esc}')
+        except Exception:
+            pass
+
+    def close(self):
+        """关闭菜单：优先用 Escape，只发一次避免误操作"""
+        try:
+            self.control.SendKeys('{Esc}')
+        except:
+            pass
 
 class SelectContactWnd(BaseUISubWnd):
     _ui_cls_name:str=WxUI41Config.SESSION_PICKER_CLS
