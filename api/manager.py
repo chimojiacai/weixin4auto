@@ -3,6 +3,7 @@ import os
 import tempfile
 import threading
 from collections import defaultdict
+from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlparse, unquote
 
@@ -236,7 +237,7 @@ class WeChatManager:
             'is_self': getattr(msg, 'is_self', False),
             'is_system': getattr(msg, 'is_system', False),
             'sender': getattr(msg, 'sender', None) or chat.who,
-            'time': getattr(msg, 'time', None),
+            'time': getattr(msg, 'time', None) or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         }
         return data
 
