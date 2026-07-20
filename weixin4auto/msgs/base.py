@@ -222,6 +222,79 @@ class BaseMessage(Message, ABC):
         self.hash_text = f'({rect.height()},{rect.width()}){self.content}'
         self.hash = md5(self.hash_text.encode()).hexdigest()
 
+    def _get_sender_by_ocr(self) -> str:
+        """通过 OCR 识别消息控件中的发送者昵称（无需窗口激活）
+        
+        从消息控件截图，裁剪出顶部发送者昵称区域，使用 OCR 识别文字。
+        适用于群聊场景，不需要唤起窗口或点击头像。
+        
+        Returns:
+            str: 发送者昵称，识别失败返回空字符串
+        """
+        import re
+        from weixin4auto.logger import wxlog
+        
+        try:
+            # 消息控件截图，返回 PIL Image
+            img = self.control.ScreenShot(return_img=True)
+            if img is None:
+                return ''
+            
+            # 裁剪发送者昵称区域：顶部 0~35px，水平方向跳过左侧头像区域(~50px)
+            width, height = img.size
+            top_crop = img.crop((50, 0, min(width, 350), min(35, height)))
+            
+            # 放大 2 倍提升 OCR 精度
+            from PIL import Image
+            resample = getattr(Image, 'LANCZOS', getattr(Image, 'Resampling', Image).LANCZOS)
+            top_crop = top_crop.resize(
+                (top_crop.width * 2, top_crop.height * 2), resample
+            )
+            
+            # 转灰度
+            top_crop = top_crop.convert('L')
+            
+            # OCR 识别（延迟导入，仅在使用时加载）
+            # 优先使用 rapidocr-onnxruntime（纯 Python，无需外部程序）
+            text = ''
+            try:
+                import numpy as np
+                from rapidocr_onnxruntime import RapidOCR
+                ocr = RapidOCR()
+                img_array = np.array(top_crop)
+                result, _ = ocr(img_array)
+                if result:
+                    text = ' '.join([line[1] for line in result])
+            except ImportError:
+                # rapidocr 未安装，回退到 pytesseract
+                try:
+                    import pytesseract
+                    text = pytesseract.image_to_string(
+                        top_crop, lang='chi_sim+eng',
+                        config='--psm 7 --oem 3'
+                    )
+                except Exception as e:
+                    wxlog.debug(f'[OCR] pytesseract 失败: {e}')
+            if not text:
+                wxlog.debug('[OCR] 未安装 rapidocr-onnxruntime 或 pytesseract，或识别失败')
+                return ''
+            text = text.strip()
+            
+            # 清理识别结果
+            text = re.sub(r'[^\w\u4e00-\u9fff\-_.]', '', text).strip()
+            
+            # 过滤无效结果
+            if not text or len(text) > 30:
+                return ''
+            if text in ['图片', '动画表情', '视频', '文件', '语音', '表情']:
+                return ''
+            
+            wxlog.debug(f'[OCR] sender=\'{text}\'')
+            return text
+        except Exception as e:
+            wxlog.debug(f'[OCR] 识别失败: {e}')
+            return ''
+
     def _get_sender_from_avatar(self) -> str:
         """通过点击消息体头像获取发送者昵称（无感知）
         

@@ -354,33 +354,36 @@ class WeChat(Chat, Listener):
                 if msgs:
                     wxlog.debug(f"[{who}] 获取到 {len(msgs)} 条新消息")
                     for msg in msgs:
-                        # 群聊中对方消息：fetch_sender=True 时，唤起窗口并通过点击头像获取真实昵称
+                        # 群聊中对方消息：根据 fetch_sender 选择不同策略获取发送者昵称
                         msg_sender = getattr(msg, 'sender', None)
                         is_group = chat.is_group
                         is_friend = getattr(msg, 'attr', None) == 'friend'
                         sender_match = not msg_sender or msg_sender == chat.who
-                        should_fetch = (
+                        need_sender = (
                             is_group
                             and is_friend
-                            and chat.fetch_sender
-                            and hasattr(msg, '_get_sender_from_avatar')
                             and sender_match
                         )
                         wxlog.debug(
                             f"[sender] is_group={is_group}, is_friend={is_friend}, "
                             f"fetch_sender={chat.fetch_sender}, sender_match={sender_match}, "
-                            f"should_fetch={should_fetch}, sender='{msg_sender}', who='{chat.who}'"
+                            f"need_sender={need_sender}, sender='{msg_sender}', who='{chat.who}'"
                         )
-                        if should_fetch:
+                        if need_sender:
                             try:
-                                # 唤起聊天窗口至前台，确保头像点击可定位
-                                import win32gui
-                                import win32con
-                                top_hwnd = chat._api.control.GetTopLevelControl().NativeWindowHandle
-                                win32gui.ShowWindow(top_hwnd, win32con.SW_SHOWNOACTIVATE)
-                                win32gui.SetForegroundWindow(top_hwnd)
-                                sender_name = msg._get_sender_from_avatar()
-                                wxlog.debug(f"[sender] avatar结果: '{sender_name}'")
+                                if chat.fetch_sender:
+                                    # fetch_sender=True：唤起窗口 + 点击头像（精确但重）
+                                    import win32gui
+                                    import win32con
+                                    top_hwnd = chat._api.control.GetTopLevelControl().NativeWindowHandle
+                                    win32gui.ShowWindow(top_hwnd, win32con.SW_SHOWNOACTIVATE)
+                                    win32gui.SetForegroundWindow(top_hwnd)
+                                    sender_name = msg._get_sender_from_avatar()
+                                    wxlog.debug(f"[sender] avatar结果: '{sender_name}'")
+                                else:
+                                    # fetch_sender=False：OCR 识别（轻量，无需窗口操作）
+                                    sender_name = msg._get_sender_by_ocr()
+                                    wxlog.debug(f"[sender] OCR结果: '{sender_name}'")
                                 if sender_name:
                                     msg.sender = sender_name
                             except Exception as e:
@@ -525,7 +528,9 @@ class WeChat(Chat, Listener):
         Args:
             nickname (str): 要监听的聊天对象
             callback (Callable[['Message', Chat], None]): 回调函数，参数为(Message对象, Chat对象)，返回值为None
-            fetch_sender (bool): 群聊中是否唤起窗口并点击头像获取发送者昵称，默认True
+            fetch_sender (bool): 群聊中获取发送者昵称的策略：
+                True - 唤起窗口点击头像（精确，但有窗口操作）
+                False - OCR 识别消息截图（轻量，无需窗口操作，需安装 pytesseract 或 rapidocr-onnxruntime）
         """
         if not hasattr(self, '_listener_is_listening') or not self._listener_is_listening:
             self._listener_start()
@@ -669,7 +674,9 @@ class WeChat(Chat, Listener):
             auto_reply: 自动回复模板，{msg} 会被替换为收到的消息内容
                         例如: "收到：{msg}"  如果设置此项且未指定 callback，会自动生成回调
             block: 是否阻塞当前线程（True 时按 Ctrl+C 退出）
-            fetch_sender: 群聊中是否唤起窗口并点击头像获取发送者昵称，默认True
+            fetch_sender: 群聊中获取发送者昵称的策略：
+                True - 唤起窗口点击头像（精确，默认）
+                False - OCR 识别消息截图（轻量，无需窗口操作）
         
         Examples:
             # 最简单用法：监听并缓存消息

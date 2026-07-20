@@ -88,7 +88,7 @@ def main():
         callback=on_message,
         auto_reply=args.auto_reply,
         block=True,
-        # fetch_sender=False,
+        fetch_sender=False,
     )
     print("已退出")
 
