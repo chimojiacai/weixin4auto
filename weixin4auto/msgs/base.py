@@ -25,6 +25,21 @@ def truncate_string(s: str, n: int=8) -> str:
     s = s.replace('\n', '').strip()
     return s if len(s) <= n else s[:n] + '...'
 
+# OCR 单例：避免每次识别都重新加载模型（~3s）
+_OCR_ENGINE = None
+
+def _get_ocr_engine():
+    """获取或创建 OCR 引擎单例"""
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _OCR_ENGINE = RapidOCR()
+        except ImportError:
+            _OCR_ENGINE = False  # 标记为不可用，避免重复尝试
+    return _OCR_ENGINE if _OCR_ENGINE else None
+
+
 class Message:
     """消息对象基类
 
@@ -222,21 +237,33 @@ class BaseMessage(Message, ABC):
         self.hash_text = f'({rect.height()},{rect.width()}){self.content}'
         self.hash = md5(self.hash_text.encode()).hexdigest()
 
-    def _get_sender_by_ocr(self) -> str:
+    def _get_sender_by_ocr(self, img=None) -> str:
         """通过 OCR 识别消息控件中的发送者昵称（无需窗口激活）
         
         从消息控件截图，裁剪出顶部发送者昵称区域，使用 OCR 识别文字。
         适用于群聊场景，不需要唤起窗口或点击头像。
         
+        Args:
+            img: 可选，预先捕获的 PIL Image（主线程截图，线程安全）
+                若不传，则自行调用 control.ScreenShot()（非线程安全）
+        
         Returns:
             str: 发送者昵称，识别失败返回空字符串
         """
         import re
+        import numpy as np
         from weixin4auto.logger import wxlog
         
         try:
-            # 消息控件截图，返回 PIL Image
-            img = self.control.ScreenShot(return_img=True)
+            # 获取缓存的 OCR 引擎
+            ocr = _get_ocr_engine()
+            if ocr is None:
+                wxlog.debug('[OCR] rapidocr-onnxruntime 未安装')
+                return ''
+            
+            # 截图：优先使用预捕获的图片（线程安全），否则自行截图（需主线程）
+            if img is None:
+                img = self.control.ScreenShot(return_img=True)
             if img is None:
                 return ''
             
@@ -244,41 +271,14 @@ class BaseMessage(Message, ABC):
             width, height = img.size
             top_crop = img.crop((50, 0, min(width, 350), min(35, height)))
             
-            # 放大 2 倍提升 OCR 精度
-            from PIL import Image
-            resample = getattr(Image, 'LANCZOS', getattr(Image, 'Resampling', Image).LANCZOS)
-            top_crop = top_crop.resize(
-                (top_crop.width * 2, top_crop.height * 2), resample
-            )
+            # 转灰度 + numpy array
+            img_array = np.array(top_crop.convert('L'))
             
-            # 转灰度
-            top_crop = top_crop.convert('L')
-            
-            # OCR 识别（延迟导入，仅在使用时加载）
-            # 优先使用 rapidocr-onnxruntime（纯 Python，无需外部程序）
-            text = ''
-            try:
-                import numpy as np
-                from rapidocr_onnxruntime import RapidOCR
-                ocr = RapidOCR()
-                img_array = np.array(top_crop)
-                result, _ = ocr(img_array)
-                if result:
-                    text = ' '.join([line[1] for line in result])
-            except ImportError:
-                # rapidocr 未安装，回退到 pytesseract
-                try:
-                    import pytesseract
-                    text = pytesseract.image_to_string(
-                        top_crop, lang='chi_sim+eng',
-                        config='--psm 7 --oem 3'
-                    )
-                except Exception as e:
-                    wxlog.debug(f'[OCR] pytesseract 失败: {e}')
-            if not text:
-                wxlog.debug('[OCR] 未安装 rapidocr-onnxruntime 或 pytesseract，或识别失败')
+            # OCR 识别
+            result, _ = ocr(img_array)
+            if not result:
                 return ''
-            text = text.strip()
+            text = ' '.join([line[1] for line in result]).strip()
             
             # 清理识别结果
             text = re.sub(r'[^\w\u4e00-\u9fff\-_.]', '', text).strip()

@@ -306,13 +306,29 @@ class ChatBox(BaseUISubWnd):
             ]
         return []
 
+    def _re_find_msgbox(self):
+        """重新查找 msgbox 控件，避免缓存引用过时"""
+        try:
+            msg_view = self.control.GroupControl(ClassName=WxUI41Config.CHAT_MESSAGE_VIEW_CLS)
+            if msg_view.Exists(0):
+                self.msgbox = msg_view.ListControl()
+                return True
+            found = self._find_child_by_class(self.control, WxUI41Config.CHAT_MESSAGE_VIEW_CLS)
+            if found:
+                self.msgbox = found.ListControl()
+                return True
+        except Exception:
+            pass
+        return False
+
     def get_new_msgs(self):
-        """获取新消息（基于 runtimeid 变更检测 + 自动重置）
+        """获取新消息（基于 runtimeid 变更检测 + UIA 树稳定等待）
         
         核心思路：
         1. 检测 msgbox 的 runtimeid 是否变化（UIA 树重建）
         2. 如果变化，自动重置消息追踪状态
-        3. 比较当前状态和已记录状态，返回新消息
+        3. 检测到新消息后，等待 UIA 树稳定（连续两次读取一致）
+        4. 稳定后再更新状态并返回，避免因 UIA 增量更新导致漏消息
         """
         # 快速检查 msgbox 是否存在
         try:
@@ -333,7 +349,6 @@ class ChatBox(BaseUISubWnd):
         # 检测 runtimeid 是否变化（UIA 树重建/窗口恢复）
         last_known_id = getattr(self, '_last_msgbox_id', None)
         if last_known_id is not None and last_known_id != current_msgbox_id:
-            # msgbox runtimeid 变了，旧 ID 全部失效，重新初始化
             from weixin4auto.logger import wxlog
             wxlog.debug(f"[msgbox] runtimeid 变更: {last_known_id} -> {current_msgbox_id}，重置消息追踪")
             # 清理旧 ID 的数据
@@ -341,6 +356,8 @@ class ChatBox(BaseUISubWnd):
                 del USED_MSG_IDS[last_known_id]
             if last_known_id in LAST_MSG_COUNT:
                 del LAST_MSG_COUNT[last_known_id]
+            # 重新查找 msgbox 控件，避免缓存引用过时
+            self._re_find_msgbox()
             # 重置当前状态
             self._last_msgbox_id = current_msgbox_id
             USED_MSG_IDS[current_msgbox_id] = tuple()
@@ -361,59 +378,69 @@ class ChatBox(BaseUISubWnd):
         
         # 获取已记录的消息 ID 列表
         current_used_ids = USED_MSG_IDS.get(current_msgbox_id, tuple())
-        last_msg_count = LAST_MSG_COUNT.get(current_msgbox_id, 0)
         
         if self._empty and current_used_ids:
             self._empty = False
         
-        def _update_state():
-            try:
-                all_msg_ids = tuple(c.runtimeid for c in msg_controls)
-                USED_MSG_IDS[current_msgbox_id] = all_msg_ids[-100:] if len(all_msg_ids) > 100 else all_msg_ids
-                LAST_MSG_COUNT[current_msgbox_id] = current_msg_count
-            except Exception:
-                pass
-        
-        def _extract_new_msgs(candidate_controls, used_id_set):
-            new_ids = [c.runtimeid for c in candidate_controls if c.runtimeid not in used_id_set]
-            if new_ids:
-                _update_state()
-                new_id_set = set(new_ids)
-                return [parse_msg(c, self) for c in candidate_controls if c.runtimeid in new_id_set]
-            return []
-        
         # 首次初始化：记录当前状态，不返回历史消息
         if not current_used_ids:
             if not self._empty:
-                _update_state()
+                self._commit_state(current_msgbox_id, msg_controls, current_msg_count)
             return []
         
         used_id_set = set(current_used_ids)
         
-        # 情况1：消息数量增加
-        if current_msg_count > last_msg_count:
-            new_msg_count = current_msg_count - last_msg_count
-            check_count = min(new_msg_count + 10, current_msg_count)
-            tail_controls = msg_controls[-check_count:]
-            result = _extract_new_msgs(tail_controls, used_id_set)
-            if result:
-                return result
-            _update_state()
+        # 快速路径：检查尾部控件，无新消息则直接返回
+        check_count = min(30, current_msg_count)
+        tail_controls = msg_controls[-check_count:]
+        new_ids_in_tail = [c.runtimeid for c in tail_controls if c.runtimeid not in used_id_set]
+        if not new_ids_in_tail:
+            return []  # 快速路径：无新消息
+        
+        # ── 检测到新消息：等待 UIA 树稳定 ──
+        # WeChat 的 UIA 树是增量更新的，多条消息同时到达时，
+        # GetChildren() 可能只返回部分。循环读取直到结果稳定。
+        stable_controls = msg_controls
+        stable_count = current_msg_count
+        for _ in range(3):
+            time.sleep(0.05)  # 50ms，给 UIA 树更新时间
+            try:
+                re_controls = self.msgbox.GetChildren()
+                re_controls = [c for c in re_controls if c.ControlTypeName == 'ListItemControl']
+                re_count = len(re_controls)
+            except Exception:
+                break
+            if re_count == stable_count:
+                break  # 结果稳定，退出等待
+            # 数量增加，继续等待
+            stable_controls = re_controls
+            stable_count = re_count
+        
+        # 使用稳定后的数据提取新消息
+        final_used_ids = USED_MSG_IDS.get(current_msgbox_id, tuple())
+        final_used_set = set(final_used_ids)
+        final_check = min(30, stable_count)
+        final_tail = stable_controls[-final_check:]
+        final_new_ids = [c.runtimeid for c in final_tail if c.runtimeid not in final_used_set]
+        
+        if not final_new_ids:
+            # 稳定后没有新消息（之前检测到的可能是 UIA 过渡态）
+            self._commit_state(current_msgbox_id, stable_controls, stable_count)
             return []
         
-        # 情况2：消息数量未变 —— 快速路径
-        last_ctrl = msg_controls[-1]
-        last_id = last_ctrl.runtimeid
-        if last_id in used_id_set:
-            quick_check_count = min(5, current_msg_count)
-            tail_controls = msg_controls[-quick_check_count:]
-            has_new = any(c.runtimeid not in used_id_set for c in tail_controls)
-            if not has_new:
-                return []  # 快速路径：无新消息
-        
-        check_count = min(20, current_msg_count)
-        tail_controls = msg_controls[-check_count:]
-        return _extract_new_msgs(tail_controls, used_id_set)
+        # 更新状态并返回
+        self._commit_state(current_msgbox_id, stable_controls, stable_count)
+        new_id_set = set(final_new_ids)
+        return [parse_msg(c, self) for c in final_tail if c.runtimeid in new_id_set]
+
+    def _commit_state(self, msgbox_id, msg_controls, msg_count):
+        """提交消息追踪状态（仅在 UIA 树稳定后调用）"""
+        try:
+            all_msg_ids = tuple(c.runtimeid for c in msg_controls)
+            USED_MSG_IDS[msgbox_id] = all_msg_ids[-100:] if len(all_msg_ids) > 100 else all_msg_ids
+            LAST_MSG_COUNT[msgbox_id] = msg_count
+        except Exception:
+            pass
 
     def _update_used_msg_ids(self):
         if not self.msgbox.Exists(0):

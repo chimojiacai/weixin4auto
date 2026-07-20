@@ -80,6 +80,42 @@ class Listener(ABC):
         except Exception as e:
             wxlog.debug(f"监听消息回调发生错误：{traceback.format_exc()}")
 
+    def _fetch_sender_and_callback(
+            self,
+            msg: 'Message',
+            chat: 'Chat',
+            callback: Callable[['Message', 'Chat'], None],
+            use_avatar: bool = False,
+            pre_img = None,
+        ):
+        """在线程池中异步获取发送者昵称并执行回调
+        
+        Args:
+            msg: 消息对象
+            chat: 聊天窗口对象
+            callback: 用户回调函数
+            use_avatar: True=点击头像获取，False=OCR识别
+            pre_img: 预先在主线程捕获的 PIL Image（仅 OCR 模式使用）
+        """
+        try:
+            if use_avatar:
+                import win32gui
+                import win32con
+                top_hwnd = chat._api.control.GetTopLevelControl().NativeWindowHandle
+                win32gui.ShowWindow(top_hwnd, win32con.SW_SHOWNOACTIVATE)
+                win32gui.SetForegroundWindow(top_hwnd)
+                sender_name = msg._get_sender_from_avatar()
+                wxlog.debug(f"[sender] avatar结果: '{sender_name}'")
+            else:
+                sender_name = msg._get_sender_by_ocr(img=pre_img)
+                wxlog.debug(f"[sender] OCR结果: '{sender_name}'")
+            if sender_name:
+                msg.sender = sender_name
+        except Exception as e:
+            wxlog.debug(f"[群聊] 获取发送者昵称失败: {e}")
+        # 执行用户回调
+        self._safe_callback(callback, msg, chat)
+
     def _listener_stop(self):
         self._listener_is_listening = False
         self._listener_stop_event.set()
@@ -370,25 +406,26 @@ class WeChat(Chat, Listener):
                             f"need_sender={need_sender}, sender='{msg_sender}', who='{chat.who}'"
                         )
                         if need_sender:
-                            try:
-                                if chat.fetch_sender:
-                                    # fetch_sender=True：唤起窗口 + 点击头像（精确但重）
-                                    import win32gui
-                                    import win32con
-                                    top_hwnd = chat._api.control.GetTopLevelControl().NativeWindowHandle
-                                    win32gui.ShowWindow(top_hwnd, win32con.SW_SHOWNOACTIVATE)
-                                    win32gui.SetForegroundWindow(top_hwnd)
-                                    sender_name = msg._get_sender_from_avatar()
-                                    wxlog.debug(f"[sender] avatar结果: '{sender_name}'")
-                                else:
-                                    # fetch_sender=False：OCR 识别（轻量，无需窗口操作）
-                                    sender_name = msg._get_sender_by_ocr()
-                                    wxlog.debug(f"[sender] OCR结果: '{sender_name}'")
-                                if sender_name:
-                                    msg.sender = sender_name
-                            except Exception as e:
-                                wxlog.debug(f"[群聊] 获取发送者昵称失败: {e}")
-                        self._excutor.submit(self._safe_callback, callback, msg, chat)
+                            if chat.fetch_sender:
+                                # fetch_sender=True：头像点击（在线程池执行，会操作窗口）
+                                self._excutor.submit(
+                                    self._fetch_sender_and_callback,
+                                    msg, chat, callback, use_avatar=True
+                                )
+                            else:
+                                # fetch_sender=False：在主线程预先截图（UIA 线程不安全），
+                                # 然后丢给线程池做 OCR，避免并发 UIA 访问导致消息丢失
+                                pre_img = None
+                                try:
+                                    pre_img = msg.control.ScreenShot(return_img=True)
+                                except Exception:
+                                    pass
+                                self._excutor.submit(
+                                    self._fetch_sender_and_callback,
+                                    msg, chat, callback, use_avatar=False, pre_img=pre_img
+                                )
+                        else:
+                            self._excutor.submit(self._safe_callback, callback, msg, chat)
             except Exception as e:
                 wxlog.debug(f"[{who}] 获取新消息失败: {e}")
                 continue
