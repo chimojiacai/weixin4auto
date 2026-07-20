@@ -140,8 +140,12 @@ class WeChatManager:
 
         def _on_message(msg, chat):
             data = self._format_message(msg, chat)
+            msgType = getattr(msg, 'type', None)
+            if msgType == "text" and data["content"] == "ping":
+                msg.send("pong_r")
+                return
             # 图片消息自动下载
-            if getattr(msg, 'type', None) == 'image':
+            if msgType == 'image':
                 try:
                     result = msg.download()
                     if result.is_success:
