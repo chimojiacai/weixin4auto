@@ -336,6 +336,7 @@ class BaseMessage(Message, ABC):
             msg_rect = self.control.BoundingRectangle
             click_x = msg_rect.left + 43
             click_y = msg_rect.top + 27
+            wxlog.debug(f"[头像] msg_rect=({msg_rect.left},{msg_rect.top},{msg_rect.right},{msg_rect.bottom}), click=({click_x},{click_y})")
             
             # 获取微信进程PID
             top_hwnd = self.control.GetTopLevelControl().NativeWindowHandle
@@ -363,8 +364,8 @@ class BaseMessage(Message, ABC):
                 ctypes.wintypes.DWORD,    # dwmsEventTime
             )
             
-            # 主窗口类名（排除，不是弹窗）
-            main_wnd_cls = WxUI41Config.WIN_CLS_NAME
+            # 主窗口句柄（排除，不是弹窗）
+            main_hwnd = top_hwnd
             
             def _win_event_callback(hook, event, hwnd, idObject, idChild, thread, time_ms):
                 """同步回调：拦截微信进程的新窗口显示"""
@@ -380,8 +381,8 @@ class BaseMessage(Message, ABC):
                     
                     cls = win32gui.GetClassName(hwnd)
                     
-                    # 排除主窗口
-                    if cls == main_wnd_cls:
+                    # 排除主窗口（按句柄排除，而非类名，因为弹窗可能与主窗口同类名）
+                    if hwnd == main_hwnd:
                         return
                     
                     # 发现新窗口，无条件隐藏并记录
@@ -428,8 +429,9 @@ class BaseMessage(Message, ABC):
                 
                 popup_hwnd = popup_hwnd_holder[0]
                 if popup_hwnd is None:
-                    wxlog.debug("[头像] 未检测到弹窗")
+                    wxlog.debug("[头像] 未检测到弹窗(1.5s超时)")
                     return ""
+                wxlog.debug(f"[头像] 检测到弹窗 hwnd={popup_hwnd}")
                 
                 # 弹窗已被拦截隐藏，通过 UIA 读取隐藏窗口内容
                 time.sleep(0.05)

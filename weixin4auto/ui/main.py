@@ -180,7 +180,7 @@ class WeChatSubWnd(BaseUISubWnd):
     
 
 class WeChatMainWnd(WeChatSubWnd):
-    _ui_cls_name: str = WxUI41Config.MAIN_WINDOW_UI_CLS
+    _ui_cls_names: list = WxUI41Config.MAIN_WINDOW_UI_CLS if isinstance(WxUI41Config.MAIN_WINDOW_UI_CLS, list) else [WxUI41Config.MAIN_WINDOW_UI_CLS]
     _win_cls_name: str = WxUI41Config.WIN_CLS_NAME
     _ui_name: str = '微信'
 
@@ -214,13 +214,31 @@ class WeChatMainWnd(WeChatSubWnd):
                     raise Exception(error_msg)
                 
                 wxs = all_wxs
-            
+
+            matched = False
             for index, (hwnd, clsname, winname) in enumerate(wxs):
                 self._setup_ui(hwnd)
-                if self.control.ClassName == self._ui_cls_name:
+                actual_cls = self.control.ClassName if self.control else ''
+                # 匹配配置列表中的任一类名，或包含 MainWindow（兼容不同版本微信）
+                if actual_cls in self._ui_cls_names or 'MainWindow' in actual_cls:
+                    matched = True
                     break
-                elif index+1 == len(wxs):
-                    raise Exception(f'未找到微信窗口：{nickname}')
+            
+            if not matched:
+                # 收集所有实际的 UIA ClassName 用于报错
+                actual_classes = []
+                for h, cls, name in wxs:
+                    try:
+                        c = uia.ControlFromHandle(h)
+                        actual_classes.append(f'{c.ClassName}(title="{name}")')
+                    except:
+                        pass
+                raise Exception(
+                    f'未找到微信窗口：{nickname}\n'
+                    f'期望 UIA ClassName: {self._ui_cls_names}\n'
+                    f'实际检测到的: {", ".join(actual_classes)}\n'
+                    f'请修改 weixin4auto/ui_config.py 中的 MAIN_WINDOW_UI_CLS'
+                )
         # if NetErrInfoTipsBarWnd(self):
         #     raise NetWorkError('微信无法连接到网络')
 

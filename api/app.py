@@ -94,7 +94,7 @@ def create_app() -> Flask:
             return jsonify({'success': False, 'error': '缺少 who 参数'})
 
         webhook_url = data.get('webhook_url')
-        fetch_sender = data.get('fetch_sender', True)
+        fetch_sender = data.get('fetch_sender', False)
 
         nicknames = [nickname] if isinstance(nickname, str) else list(nickname)
         results = []
