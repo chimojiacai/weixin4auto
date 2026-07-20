@@ -251,32 +251,46 @@ class BaseMessage(Message, ABC):
             str: 发送者昵称，识别失败返回空字符串
         """
         import re
+        import time
         import numpy as np
         from weixin4auto.logger import wxlog
         
         try:
+            _t_start = time.time()
+            
             # 获取缓存的 OCR 引擎
             ocr = _get_ocr_engine()
             if ocr is None:
                 wxlog.debug('[OCR] rapidocr-onnxruntime 未安装')
                 return ''
+            _t1 = time.time()
             
             # 截图：优先使用预捕获的图片（线程安全），否则自行截图（需主线程）
             if img is None:
                 img = self.control.ScreenShot(return_img=True)
             if img is None:
                 return ''
+            _t2 = time.time()
             
             # 裁剪发送者昵称区域：顶部 0~35px，水平方向跳过左侧头像区域(~50px)
             width, height = img.size
             top_crop = img.crop((50, 0, min(width, 350), min(35, height)))
-            
+            _t3 = time.time()
+
             # 转灰度 + numpy array
-            img_array = np.array(top_crop.convert('L'))
+            # img_array = np.array(top_crop.convert('L'))
+            img_array = np.array(top_crop)
+            wxlog.debug(
+                f"原图={img.size}, crop={top_crop.size}, array={img_array.shape}"
+            )
+            _t4 = time.time()
             
             # OCR 识别
             result, _ = ocr(img_array)
+            _t5 = time.time()
+            
             if not result:
+                wxlog.debug(f'[OCR耗时] 引擎={(_t1-_t_start)*1000:.1f}ms 截图={(_t2-_t1)*1000:.1f}ms 裁剪={(_t3-_t2)*1000:.1f}ms 灰度={(_t4-_t3)*1000:.1f}ms OCR识别={(_t5-_t4)*1000:.1f}ms 总计={(_t5-_t_start)*1000:.1f}ms')
                 return ''
             text = ' '.join([line[1] for line in result]).strip()
             
@@ -289,6 +303,8 @@ class BaseMessage(Message, ABC):
             if text in ['图片', '动画表情', '视频', '文件', '语音', '表情']:
                 return ''
             
+            _t_end = time.time()
+            wxlog.debug(f'[OCR耗时] 引擎={(_t1-_t_start)*1000:.1f}ms 截图={(_t2-_t1)*1000:.1f}ms 裁剪={(_t3-_t2)*1000:.1f}ms 灰度={(_t4-_t3)*1000:.1f}ms OCR识别={(_t5-_t4)*1000:.1f}ms 后处理={(_t_end-_t5)*1000:.1f}ms 总计={(_t_end-_t_start)*1000:.1f}ms')
             wxlog.debug(f'[OCR] sender=\'{text}\'')
             return text
         except Exception as e:
