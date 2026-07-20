@@ -16,7 +16,8 @@ dependencies = [
     "colorama",
     "comtypes",
     "flask",
-    "requests"
+    "requests",
+    "rapidocr-onnxruntime",
 ]
 
 [project.optional-dependencies]
