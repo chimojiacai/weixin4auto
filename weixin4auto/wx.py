@@ -311,6 +311,7 @@ class WeChat(Chat, Listener):
             nickname: str=None, 
             start_listener: bool=False,
             debug: bool=False,
+            resize: bool=True,
             **kwargs
         ):
         delete_update_files()
@@ -331,6 +332,11 @@ class WeChat(Chat, Listener):
         
         # 唤起微信窗口到前台并打印昵称
         self._api._show()
+        
+        # 自动调整窗口大小：左侧 1/3 屏幕，高度 100%
+        if resize:
+            self._resize_to_left_third()
+        
         print(f'微信用户昵称: {self.nickname}')
         
         if start_listener:
@@ -338,7 +344,22 @@ class WeChat(Chat, Listener):
         if debug:
             wxlog.set_debug(True)
             wxlog.debug('Debug mode is on')
-        
+    
+    def _resize_to_left_third(self):
+        """将微信窗口调整为屏幕左侧，左边距 1/10 屏幕宽，宽度 2/5 屏幕宽，高度 100%"""
+        import win32gui
+        import ctypes
+        try:
+            hwnd = self._api.HWND
+            screen_width = ctypes.windll.user32.GetSystemMetrics(0)
+            screen_height = ctypes.windll.user32.GetSystemMetrics(1)
+            x = screen_width // 10          # 左边距：屏幕宽度的 1/10
+            target_width = screen_width * 2 // 5  # 宽度：屏幕宽度的 2/5
+            win32gui.SetWindowPos(hwnd, 0, x, 0, target_width, screen_height, 0x0040)  # SWP_NOZORDER
+            wxlog.debug(f'[resize] 窗口已调整: x={x}, {target_width}x{screen_height}')
+        except Exception as e:
+            wxlog.debug(f'[resize] 调整窗口大小失败: {e}')
+
     def _get_listen_messages(self):
         """获取监听消息（容错重试 + 窗口恢复 + runtimeid 变更检测）"""
         try:
