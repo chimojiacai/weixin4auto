@@ -28,6 +28,29 @@ def truncate_string(s: str, n: int=8) -> str:
 # OCR 单例：避免每次识别都重新加载模型（~3s）
 _OCR_ENGINE = None
 
+# OCR 结果缓存：{perceptual_hash: nickname}
+# 同一发送者的昵称区域视觉相同，用感知哈希容忍微小像素差异
+_OCR_CACHE: Dict[str, str] = {}
+_OCR_CACHE_MAX = 200  # 最大缓存条数，防止内存溢出
+
+def _crop_perceptual_hash(img) -> str:
+    """计算裁剪图的 dHash（差分哈希）
+    
+    原理：缩小到 17x8 灰度图，比较每行相邻像素的相对大小。
+    只关心梯度方向（左 > 右?），不依赖绝对亮度/全局均值，
+    因此对背景色变化、消息气泡宽度变化完全免疫。
+    """
+    small = img.resize((17, 8)).convert('L')
+    pixels = list(small.getdata())  # 17*8 = 136 个灰度值
+    bits = []
+    for row in range(8):
+        for col in range(16):
+            left = pixels[row * 17 + col]
+            right = pixels[row * 17 + col + 1]
+            bits.append(1 if left > right else 0)
+    # 128 bits = 16 bytes
+    return bytes(bits).hex()
+
 def _get_ocr_engine():
     """获取或创建 OCR 引擎单例"""
     global _OCR_ENGINE
@@ -252,45 +275,51 @@ class BaseMessage(Message, ABC):
         """
         import re
         import time
-        import numpy as np
         from weixin4auto.logger import wxlog
         
         try:
             _t_start = time.time()
-            
-            # 获取缓存的 OCR 引擎
-            ocr = _get_ocr_engine()
-            if ocr is None:
-                wxlog.debug('[OCR] rapidocr-onnxruntime 未安装')
-                return ''
-            _t1 = time.time()
             
             # 截图：优先使用预捕获的图片（线程安全），否则自行截图（需主线程）
             if img is None:
                 img = self.control.ScreenShot(return_img=True)
             if img is None:
                 return ''
-            _t2 = time.time()
+            _t1 = time.time()
             
             # 裁剪发送者昵称区域：顶部 0~35px，水平方向跳过左侧头像区域(~50px)
             width, height = img.size
             top_crop = img.crop((50, 0, min(width, 350), min(35, height)))
+            _t2 = time.time()
+            
+            # 计算感知哈希：将昵称区域贴到固定尺寸白色画布上
+            # 无论消息控件宽度如何变化，hash 输入始终为 200x35，保证稳定性
+            from PIL import Image as _PILImage
+            hash_crop = img.crop((50, 0, min(width, 250), min(35, height)))
+            hash_canvas = _PILImage.new('RGB', (200, 35), (255, 255, 255))
+            hash_canvas.paste(hash_crop, (0, 0))
+            crop_hash = _crop_perceptual_hash(hash_canvas)
+            if crop_hash in _OCR_CACHE:
+                cached = _OCR_CACHE[crop_hash]
+                wxlog.debug(f'[OCR] 缓存命中 sender=\'{cached}\' ({(_t2-_t_start)*1000:.1f}ms)')
+                return cached
             _t3 = time.time()
-
-            # 转灰度 + numpy array
-            # img_array = np.array(top_crop.convert('L'))
+            
+            # 缓存未命中，执行 OCR
+            ocr = _get_ocr_engine()
+            if ocr is None:
+                wxlog.debug('[OCR] rapidocr-onnxruntime 未安装')
+                return ''
+            
+            import numpy as np
             img_array = np.array(top_crop)
-            wxlog.debug(
-                f"原图={img.size}, crop={top_crop.size}, array={img_array.shape}"
-            )
+            result, _ = ocr(img_array)
             _t4 = time.time()
             
-            # OCR 识别
-            result, _ = ocr(img_array)
-            _t5 = time.time()
-            
             if not result:
-                wxlog.debug(f'[OCR耗时] 引擎={(_t1-_t_start)*1000:.1f}ms 截图={(_t2-_t1)*1000:.1f}ms 裁剪={(_t3-_t2)*1000:.1f}ms 灰度={(_t4-_t3)*1000:.1f}ms OCR识别={(_t5-_t4)*1000:.1f}ms 总计={(_t5-_t_start)*1000:.1f}ms')
+                # 识别失败也缓存空串，避免重复 OCR
+                _OCR_CACHE[crop_hash] = ''
+                wxlog.debug(f'[OCR耗时] 截图={(_t1-_t_start)*1000:.1f}ms 裁剪={(_t2-_t1)*1000:.1f}ms 缓存查={(_t3-_t2)*1000:.1f}ms OCR={(_t4-_t3)*1000:.1f}ms 总计={(_t4-_t_start)*1000:.1f}ms (无结果)')
                 return ''
             text = ' '.join([line[1] for line in result]).strip()
             
@@ -299,13 +328,18 @@ class BaseMessage(Message, ABC):
             
             # 过滤无效结果
             if not text or len(text) > 30:
-                return ''
-            if text in ['图片', '动画表情', '视频', '文件', '语音', '表情']:
-                return ''
+                text = ''
+            elif text in ['图片', '动画表情', '视频', '文件', '语音', '表情']:
+                text = ''
+            
+            # 写入缓存
+            if len(_OCR_CACHE) >= _OCR_CACHE_MAX:
+                _OCR_CACHE.clear()
+            _OCR_CACHE[crop_hash] = text
             
             _t_end = time.time()
-            wxlog.debug(f'[OCR耗时] 引擎={(_t1-_t_start)*1000:.1f}ms 截图={(_t2-_t1)*1000:.1f}ms 裁剪={(_t3-_t2)*1000:.1f}ms 灰度={(_t4-_t3)*1000:.1f}ms OCR识别={(_t5-_t4)*1000:.1f}ms 后处理={(_t_end-_t5)*1000:.1f}ms 总计={(_t_end-_t_start)*1000:.1f}ms')
-            wxlog.debug(f'[OCR] sender=\'{text}\'')
+            wxlog.debug(f'[OCR耗时] 截图={(_t1-_t_start)*1000:.1f}ms 裁剪={(_t2-_t1)*1000:.1f}ms 缓存查={(_t3-_t2)*1000:.1f}ms OCR={(_t4-_t3)*1000:.1f}ms 后处理={(_t_end-_t4)*1000:.1f}ms 总计={(_t_end-_t_start)*1000:.1f}ms')
+            wxlog.debug(f'[OCR] sender=\'{text}\' (已缓存, cache_size={len(_OCR_CACHE)})')
             return text
         except Exception as e:
             wxlog.debug(f'[OCR] 识别失败: {e}')
