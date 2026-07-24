@@ -403,7 +403,7 @@ curl -X POST http://localhost:5000/api/listen/start \
 ## 项目结构
 
 ```
-wxauto4/
+weixin4auto/
 ├── weixin4auto/          # 核心自动化库
 │   ├── ui/               # UI 控件封装
 │   │   ├── main.py       #   主窗口 / 子窗口管理
